@@ -1,0 +1,14 @@
+services:
+  replay:
+    build: .
+    ports:
+      - "127.0.0.1:8097:8090"
+    volumes:
+      - ./pb_data:/pb/pb_data
+      - ./pb_public:/pb/pb_public:ro
+    environment:
+      REPLAY_AUTH_URL: ${REPLAY_AUTH_URL:-}
+      REPLAY_ERASE_KEY: ${REPLAY_ERASE_KEY:-}
+      # Must be set behind a proxy (e.g. X-Forwarded-For), or all clients share one per-IP limit.
+      REPLAY_TRUSTED_PROXY: ${REPLAY_TRUSTED_PROXY:-}
+    restart: unless-stopped

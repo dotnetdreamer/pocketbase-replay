@@ -1,0 +1,8 @@
+node_modules
+dist
+pb_data
+pb_public
+.git
+.env
+test
+.replay-evidence

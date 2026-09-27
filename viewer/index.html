@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>Session replays</title>
+  <link rel="stylesheet" href="/dash/replay/style.css">
+  <script type="module" src="/dash/replay/app.js"></script>
+</head>
+<body>
+  <header><div><h1>Session replays</h1><p>Watch screens, taps and dialogs</p></div><button id="logout" hidden>Sign out</button></header>
+  <p id="status" role="status" aria-live="polite"></p>
+  <form id="login" class="card login">
+    <h2>Sign in to PocketBase</h2>
+    <label>Email<input name="email" type="email" autocomplete="username" required></label>
+    <label>Password<input name="password" type="password" autocomplete="current-password" required></label>
+    <button type="submit">Sign in</button>
+  </form>
+  <main id="dashboard" hidden>
+    <details class="card"><summary>Recording settings</summary>
+      <form id="settings">
+        <label>Who to record<select name="mode"><option value="off">Off</option><option value="percentage">Percentage of devices</option><option value="accounts">Selected accounts</option></select></label>
+        <label>Percentage<input name="percentage" type="number" min="0" max="100" step="0.1"></label>
+        <label>Account IDs<textarea name="account_ids" rows="3" placeholder="One account ID per line"></textarea></label>
+        <label>Keep recordings for (days)<input name="retention_days" type="number" min="1" max="365" required></label>
+        <label>Daily upload limit (MB)<input name="daily_limit_mb" type="number" min="1" max="1048576" step="1" required></label>
+        <button type="submit">Save settings</button>
+        <p>Changes reach open apps within a minute. Turning recording off stops new uploads</p>
+      </form>
+    </details>
+    <section class="card">
+      <form id="filters" class="filters">
+        <label>Account<input name="account" autocomplete="off"></label>
+        <label>Device<input name="device" autocomplete="off"></label>
+        <label>Room<input name="room" autocomplete="off"></label>
+        <label>From<input name="from" type="date"></label>
+        <label>Through<input name="to" type="date"></label>
+        <button type="submit">Find sessions</button>
+      </form>
+      <div class="table-wrap"><table><thead><tr><th>Started</th><th>Player / device</th><th>Platform</th><th>Room</th><th>Size</th><th></th></tr></thead><tbody id="sessions"></tbody></table></div>
+      <nav class="paging"><button id="previous">Previous</button><span id="page"></span><button id="next">Next</button></nav>
+    </section>
+    <section id="recording" class="card" hidden>
+      <div class="recording-heading"><h2 id="recording-title">Recording</h2><button id="close-recording">Close</button></div>
+      <p id="recording-info"></p><p id="gaps" role="status"></p><div id="player"></div>
+    </section>
+  </main>
+</body>
+</html>
