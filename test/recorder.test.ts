@@ -4,11 +4,19 @@ import { gzipSync, gunzipSync, strFromU8, strToU8 } from 'fflate';
 import { createReplay, REPLAY_LIMITS } from '../src/engine';
 import { fetchTransport, ReplayHttpError } from '../src/index';
 import { serializeEvent } from '../src/privacy';
-import type { ReplayChunk, ReplayEvent, ReplayMetadata, ReplayRuntime } from '../src/types';
+import type { ReplayChunk, ReplayEvent, ReplayMetadata, ReplayOptions, ReplayRuntime } from '../src/types';
 
 async function settle(): Promise<void> { for (let i = 0; i < 25; i++) await Promise.resolve(); }
 
-function harness(initial: { enabled?: boolean; offline?: boolean } = {}) {
+interface HarnessSetup {
+  enabled?: boolean;
+  offline?: boolean;
+  options?: Partial<ReplayOptions>;
+  rules?: Record<string, unknown>;
+  validSelector?: (selector: string) => boolean;
+}
+
+function harness(initial: HarnessSetup = {}) {
   let now = 1790500000000;
   let clock = 0;
   let enabled = initial.enabled !== false;
@@ -17,6 +25,8 @@ function harness(initial: { enabled?: boolean; offline?: boolean } = {}) {
   let configStatus = 0;
   let startStatus = 0;
   let startExtra: Record<string, unknown> = {};
+  let rules = initial.rules ?? {};
+  const captured: ReplayOptions[] = [];
   let loads = 0;
   let starts = 0;
   let stops = 0;
@@ -43,14 +53,16 @@ function harness(initial: { enabled?: boolean; offline?: boolean } = {}) {
     cancel: (timer) => { timers.delete(timer as number); },
     loadRecorder: async () => {
       loads++;
-      return { start: (emit) => { callback = emit; starts++; snapshot(); return () => { stops++; callback = undefined; }; }, snapshot };
+      return { start: (emit, options) => { captured.push(options); callback = emit; starts++; snapshot(); return () => { stops++; callback = undefined; }; }, snapshot };
     },
     compress: async (raw) => gzipSync(strToU8(raw)),
     compressSync: (raw) => gzipSync(strToU8(raw)),
     subscribe: (active) => { activity = active; return () => { removed++; activity = undefined; }; },
+    validSelector: initial.validSelector,
   };
   const controller = createReplay({
     endpoint: 'https://replay.test', metadata: () => metadata,
+    ...initial.options,
     transport: {
       post: async (url, body) => {
         requests.push({ url, body });
@@ -58,10 +70,10 @@ function harness(initial: { enabled?: boolean; offline?: boolean } = {}) {
           if (offline) throw new TypeError('Failed to fetch');
           if (url.endsWith('/config')) {
             if (configStatus) throw new ReplayHttpError(configStatus);
-            return { enabled, uploadIntervalMs: 25000 };
+            return { enabled, uploadIntervalMs: 25000, ...rules };
           }
           if (startStatus) throw new ReplayHttpError(startStatus);
-          return { enabled, sessionId: `session-${++sessionNumber}`, token: 'upload-secret', expiresAt: now + 14400000, ...startExtra };
+          return { enabled, sessionId: `session-${++sessionNumber}`, token: 'upload-secret', expiresAt: now + 14400000, ...rules, ...startExtra };
         }
         const chunk = JSON.parse(body) as ReplayChunk;
         attempts.push(chunk);
@@ -80,7 +92,8 @@ function harness(initial: { enabled?: boolean; offline?: boolean } = {}) {
     },
   }, runtime);
   return {
-    controller, runtime, requests, attempts, accepted, beacons, timers,
+    controller, runtime, requests, attempts, accepted, beacons, timers, captured,
+    rules: (value: Record<string, unknown>) => { rules = value; },
     enabled: (value: boolean) => { enabled = value; }, offline: (value: boolean) => { offline = value; },
     failureStatus: (value: number) => { failureStatus = value; },
     configStatus: (value: number) => { configStatus = value; },
@@ -640,4 +653,141 @@ test('privacy scrub covers snapshots, attribute mutations, CSS, inputs and known
   assert.match(style, /red-player/);
   assert.match(style, /color:red/);
   assert.doesNotMatch(style, /private|token/);
+});
+
+test('server privacy rules reach the recorder after the host rules, skipping empty ones', async () => {
+  const h = harness({
+    options: { maskTextSelector: ' .host-name ', blockSelector: ' \n ' },
+    rules: { maskTextSelector: '.chat,\n[class*="name"]', blockSelector: '.avatar' },
+  });
+  await settle();
+  assert.equal(h.captured.length, 1);
+  assert.equal(h.captured[0].maskTextSelector, '.host-name,.chat,\n[class*="name"]');
+  assert.equal(h.captured[0].blockSelector, '.avatar');
+  assert.equal(h.captured[0].endpoint, 'https://replay.test');
+  h.controller.stop();
+
+  const older = harness({ options: { maskTextSelector: '.host-name', blockSelector: '.photo' } });
+  await settle();
+  assert.equal(older.captured[0].maskTextSelector, '.host-name');
+  assert.equal(older.captured[0].blockSelector, '.photo');
+  older.controller.stop();
+
+  const serverOnly = harness({ rules: { maskTextSelector: '', blockSelector: '.avatar' } });
+  await settle();
+  assert.equal(serverOnly.captured[0].maskTextSelector, '');
+  assert.equal(serverOnly.captured[0].blockSelector, '.avatar');
+  serverOnly.controller.stop();
+});
+
+test('changed server rules restart capture with a fresh snapshot in the same session', async () => {
+  const h = harness({ rules: { maskTextSelector: '.chat', blockSelector: '' } });
+  await settle();
+  h.emit('before');
+  await h.advance(REPLAY_LIMITS.configIntervalMs);
+  assert.equal(h.counts().starts, 1, 'the same rules do not restart');
+  h.rules({ maskTextSelector: '.chat, .name', blockSelector: '.avatar' });
+  await h.advance(REPLAY_LIMITS.configIntervalMs);
+  assert.equal(h.counts().stops, 1);
+  assert.equal(h.counts().starts, 2);
+  assert.equal(h.captured[1].maskTextSelector, '.chat, .name');
+  assert.equal(h.captured[1].blockSelector, '.avatar');
+  assert.equal(h.controller.getMetrics().recording, true);
+  h.emit('after');
+  await h.controller.flush();
+  const uploaded = h.accepted.flatMap(events);
+  assert.equal(uploaded.filter((event) => event.type === 2).length, 2);
+  assert.deepEqual(h.accepted.flatMap(texts), ['before', 'after']);
+  assert.equal(h.counts().sessionNumber, 1);
+  h.controller.stop();
+});
+
+test('an unreadable or invalid server rule fails closed until a later poll fixes it', async () => {
+  const validSelector = (selector: string) => !selector.includes('!');
+  const h = harness({ enabled: false, validSelector });
+  await settle();
+  h.rules({ maskTextSelector: '.chat!', blockSelector: '' });
+  h.enabled(true);
+  await h.advance(REPLAY_LIMITS.configIntervalMs);
+  assert.equal(h.counts().loads, 0);
+  assert.equal(h.counts().sessionNumber, 0, 'no session is opened for rules the client cannot apply');
+  assert.equal(h.controller.getMetrics().recording, false);
+  const errors = h.controller.getMetrics().errors;
+  assert.ok(errors > 0);
+  h.rules({ maskTextSelector: 42, blockSelector: '' });
+  await h.advance(REPLAY_LIMITS.configIntervalMs);
+  assert.equal(h.counts().starts, 0);
+  assert.ok(h.controller.getMetrics().errors > errors);
+  h.rules({ maskTextSelector: '.chat', blockSelector: '' });
+  await h.advance(REPLAY_LIMITS.configIntervalMs);
+  assert.equal(h.counts().starts, 1);
+  assert.equal(h.captured[0].maskTextSelector, '.chat');
+  assert.equal(h.controller.getMetrics().recording, true);
+  h.controller.stop();
+});
+
+test('a rule that turns invalid while recording stops capture but keeps what was already recorded', async () => {
+  const h = harness({ rules: { maskTextSelector: '.chat' }, validSelector: (selector) => !selector.includes('!') });
+  await settle();
+  h.emit('before');
+  h.rules({ maskTextSelector: '.chat', blockSelector: '.avatar!' });
+  await h.advance(REPLAY_LIMITS.configIntervalMs);
+  assert.equal(h.counts().stops, 1);
+  assert.equal(h.counts().starts, 1);
+  assert.equal(h.controller.getMetrics().recording, false);
+  assert.equal(h.controller.getMetrics().sessionId, 'session-1');
+  h.emit('while stopped');
+  await h.controller.flush();
+  assert.deepEqual(h.accepted.flatMap(texts), ['before']);
+  h.rules({ maskTextSelector: '.chat', blockSelector: '.avatar' });
+  await h.advance(REPLAY_LIMITS.configIntervalMs);
+  assert.equal(h.counts().starts, 2);
+  assert.equal(h.captured[1].blockSelector, '.avatar');
+  assert.equal(h.controller.getMetrics().recording, true);
+  h.controller.stop();
+});
+
+test('an invalid host rule or a failing selector check also fails closed', async () => {
+  const host = harness({ options: { maskTextSelector: '.name,' }, validSelector: (selector) => !/,\s*(,|$)/.test(selector) });
+  await settle();
+  assert.equal(host.counts().starts, 0);
+  assert.equal(host.controller.getMetrics().recording, false);
+  host.controller.stop();
+
+  const broken = harness({ rules: { maskTextSelector: '.chat' }, validSelector: () => { throw new Error('no DOM'); } });
+  await settle();
+  assert.equal(broken.counts().starts, 0);
+  assert.ok(broken.controller.getMetrics().errors > 0);
+  broken.controller.stop();
+});
+
+test('packaged app origins map static assets to this build\'s archive on the replay server', async () => {
+  const page = globalThis as unknown as { location?: { origin: string; href: string } };
+  const archived = 'https://replay.test/replay-assets/1.4.60/assets/scene.png';
+  const cases: [string, string, string, Partial<ReplayOptions>, string][] = [
+    ['https://localhost', 'https://localhost/', '1.4.60', {}, archived],
+    ['capacitor://localhost', 'capacitor://localhost/', '1.4.60', {}, archived],
+    ['capacitor-electron://-', 'capacitor-electron://-/', '1.4.60', {}, archived],
+    ['null', 'capacitor-electron://-/index.html', '1.4.60', {}, archived],
+    ['https://example.test', 'https://example.test/', '1.4.60', {}, '/assets/scene.png'],
+    ['https://localhost:8443', 'https://localhost:8443/', '1.4.60', {}, '/assets/scene.png'],
+    ['https://localhost', 'https://localhost/', '', {}, '/assets/scene.png'],
+    ['https://localhost', 'https://localhost/', '../escape', {}, '/assets/scene.png'],
+    ['https://localhost', 'https://localhost/', '1.4.60', { assetBaseUrl: '' }, '/assets/scene.png'],
+    ['https://localhost', 'https://localhost/', '1.4.60', { assetBaseUrl: 'https://cdn.test/build/' }, 'https://cdn.test/build/assets/scene.png'],
+  ];
+  try {
+    for (const [origin, href, appVersion, options, expected] of cases) {
+      page.location = { origin, href };
+      const h = harness({ options });
+      h.metadata({ appVersion });
+      await settle();
+      h.raw({ type: 3, timestamp: 1790500001000, data: { source: 0, texts: [], removes: [], adds: [], attributes: [{ id: 5, attributes: { src: '/assets/scene.png?token=SECRET' } }] } });
+      await h.controller.flush();
+      const mutation = events(h.accepted[0]).find((event) => event.type === 3)!;
+      const attributes = (mutation.data.attributes as { attributes: { src: string } }[])[0].attributes;
+      assert.equal(attributes.src, expected, JSON.stringify({ origin, href, appVersion, options }));
+      h.controller.stop();
+    }
+  } finally { delete page.location; }
 });

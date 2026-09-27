@@ -11,7 +11,7 @@ function readBody(e) {
 }
 
 function config(app) {
-  const rows = app.findRecordsByFilter('replay_settings', "key = 'mode' || key = 'percentage' || key = 'account_ids' || key = 'retention_days' || key = 'daily_limit_mb'", '', 5, 0);
+  const rows = app.findRecordsByFilter('replay_settings', "key = 'mode' || key = 'percentage' || key = 'account_ids' || key = 'retention_days' || key = 'daily_limit_mb' || key = 'mask_selector' || key = 'block_selector'", '', 7, 0);
   const result = {};
   let valid = true;
   for (const key of Object.keys(core.DEFAULTS)) result[key] = core.DEFAULTS[key];
@@ -27,6 +27,10 @@ function config(app) {
   } catch (_) {
     const fallback = core.settings(core.DEFAULTS);
     if (Number.isInteger(result.retention_days) && result.retention_days >= 1 && result.retention_days <= 365) fallback.retention_days = result.retention_days;
+    // Recording is off here; valid rules stay so the next dashboard save does not wipe them.
+    for (const key of ['mask_selector', 'block_selector']) {
+      try { fallback[key] = core.selector(result[key], key); } catch (_) { /* An unreadable rule stays empty. */ }
+    }
     return fallback;
   }
 }
@@ -194,7 +198,8 @@ function publicConfig(e) {
   // A claim that cannot be selected needs no verification; lying only opts a client out.
   if (!selected(cfg, meta)) return { enabled: false, uploadIntervalMs: core.LIMITS.uploadIntervalMs };
   meta.accountId = account(e.app, meta);
-  return { enabled: selected(cfg, meta) && !isForgotten(e.app, meta.accountId), uploadIntervalMs: core.LIMITS.uploadIntervalMs };
+  if (!selected(cfg, meta) || isForgotten(e.app, meta.accountId)) return { enabled: false, uploadIntervalMs: core.LIMITS.uploadIntervalMs };
+  return { enabled: true, uploadIntervalMs: core.LIMITS.uploadIntervalMs, maskTextSelector: cfg.mask_selector, blockSelector: cfg.block_selector };
 }
 
 function start(e) {
@@ -226,7 +231,10 @@ function start(e) {
     session.set('expiresAt', now + core.LIMITS.sessionMs);
     tx.save(session);
   });
-  return { enabled: true, sessionId: session.id, token: token, expiresAt: now + core.LIMITS.sessionMs, expiresIn: core.LIMITS.sessionMs, uploadIntervalMs: core.LIMITS.uploadIntervalMs };
+  return {
+    enabled: true, sessionId: session.id, token: token, expiresAt: now + core.LIMITS.sessionMs, expiresIn: core.LIMITS.sessionMs, uploadIntervalMs: core.LIMITS.uploadIntervalMs,
+    maskTextSelector: cfg.mask_selector, blockSelector: cfg.block_selector,
+  };
 }
 
 function upload(e) {
@@ -290,7 +298,13 @@ function getSettings(e) { admin(e); return config(e.app); }
 function saveSettings(e) {
   admin(e);
   const body = readBody(e);
-  if (body.daily_limit_mb === undefined) body.daily_limit_mb = config(e.app).daily_limit_mb;
+  // An older dashboard leaves these out; they keep their stored values.
+  let stored = null;
+  for (const key of ['daily_limit_mb', 'mask_selector', 'block_selector']) {
+    if (body[key] !== undefined) continue;
+    stored = stored || config(e.app);
+    body[key] = stored[key];
+  }
   const cfg = core.settings(body);
   e.app.runInTransaction(function (tx) {
     for (const key of Object.keys(core.DEFAULTS)) {

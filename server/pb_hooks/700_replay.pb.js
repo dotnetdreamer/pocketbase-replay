@@ -32,7 +32,7 @@ routerAdd('GET', '/api/replay/settings', (e) => {
 routerAdd('POST', '/api/replay/settings', (e) => {
   const replay = require(`${__hooks}/lib/replay.js`);
   return replay.route(e, 'saveSettings');
-}, $apis.bodyLimit(300000));
+}, $apis.bodyLimit(450000));
 
 routerAdd('GET', '/api/replay/sessions', (e) => {
   const replay = require(`${__hooks}/lib/replay.js`);

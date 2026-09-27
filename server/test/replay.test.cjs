@@ -9,7 +9,7 @@ const core = require('../pb_hooks/lib/replay-core.js');
 const replay = require('../pb_hooks/lib/replay.js');
 const hash = value => createHash('sha256').update(value).digest('hex');
 const now = Date.now();
-const defaults = { mode: 'off', percentage: 0, account_ids: [], retention_days: 14, daily_limit_mb: 1024 };
+const defaults = { mode: 'off', percentage: 0, account_ids: [], retention_days: 14, daily_limit_mb: 1024, mask_selector: '', block_selector: '' };
 const MB = 1024 * 1024;
 
 function validChunk() {
@@ -74,9 +74,9 @@ test('the daily limit is read with the other settings and falls back to its defa
   let query;
   const stored = { mode: 'percentage', percentage: 5, account_ids: [], retention_days: 30 };
   const app = { findRecordsByFilter: (name, filter, sort, limit) => { query = { name, filter, limit }; return settingRows(stored); } };
-  assert.deepEqual(replay.config(app), { ...stored, daily_limit_mb: 1024 });
+  assert.deepEqual(replay.config(app), { ...defaults, ...stored, daily_limit_mb: 1024 });
   assert.match(query.filter, /key = 'daily_limit_mb'/);
-  assert.equal(query.limit, 5);
+  assert.equal(query.limit, 7);
   stored.daily_limit_mb = 2048;
   assert.equal(replay.config(app).daily_limit_mb, 2048);
   stored.daily_limit_mb = 0;
@@ -100,6 +100,67 @@ test('saving settings keeps the stored daily limit when an older form leaves it 
   assert.equal(replay.saveSettings(e({ ...form, daily_limit_mb: 50 })).daily_limit_mb, 50);
   assert.equal(replay.getSettings(e({})).daily_limit_mb, 50);
   assert.throws(() => replay.saveSettings(e({ ...form, daily_limit_mb: 0 })), { status: 400 });
+});
+
+test('selector settings accept long CSS lists and refuse control characters or oversized text', () => {
+  const list = '.chat-message,\n\t[class*="name"],\r\n.avatar';
+  const cfg = core.settings({ ...defaults, mask_selector: list, block_selector: '.avatar' });
+  assert.equal(cfg.mask_selector, list);
+  assert.equal(cfg.block_selector, '.avatar');
+  assert.equal(core.settings({ ...defaults, mask_selector: 'x'.repeat(20000) }).mask_selector.length, 20000);
+  const { mask_selector: _mask, block_selector: _block, ...older } = defaults;
+  assert.deepEqual(core.settings(older), defaults);
+  for (const key of ['mask_selector', 'block_selector']) {
+    for (const value of ['x'.repeat(20001), '.a\u0000', '.a\u001b[31m', '.a\u007f', '.a\u000b', 42, ['.a'], { selector: '.a' }]) {
+      assert.throws(() => core.settings({ ...defaults, [key]: value }), { status: 400, message: 'Invalid ' + key }, JSON.stringify(value));
+    }
+  }
+});
+
+test('selector settings are read with the others and survive a fallback only when valid', () => {
+  let query;
+  const stored = { ...defaults, mode: 'percentage', percentage: 5, mask_selector: '.chat, [class*="name"]', block_selector: '.avatar' };
+  const app = { findRecordsByFilter: (name, filter, sort, limit) => { query = { filter, limit }; return settingRows(stored); } };
+  assert.deepEqual(replay.config(app), stored);
+  assert.match(query.filter, /key = 'mask_selector' \|\| key = 'block_selector'/);
+  assert.equal(query.limit, Object.keys(core.DEFAULTS).length);
+  stored.mode = 'everyone';
+  assert.deepEqual(replay.config(app), { ...defaults, mask_selector: stored.mask_selector, block_selector: '.avatar' });
+  stored.mode = 'percentage';
+  stored.block_selector = '.avatar\u0000';
+  assert.deepEqual(replay.config(app), { ...defaults, mask_selector: stored.mask_selector });
+});
+
+test('saving settings keeps stored selectors when a form leaves them out and replaces them when given', () => {
+  globals();
+  const start = { ...defaults, mask_selector: '.chat', block_selector: '.avatar' };
+  const rows = new Map(Object.entries(start).map(([key, value]) => [key, { key, value: JSON.stringify(value) }]));
+  const created = [];
+  const app = {
+    runInTransaction: fn => fn(app),
+    findRecordsByFilter: () => Array.from(rows.values()).map(row => ({ getString: field => row[field] })),
+    findFirstRecordByData: (_name, _field, key) => { if (!rows.has(key)) throw new Error('missing'); return { set: (field, value) => { rows.get(key)[field] = value; } }; },
+    findCollectionByNameOrId: name => ({ name }),
+    save: row => { if (row.data) { created.push(row.data.key); rows.set(row.data.key, { ...row.data }); } },
+  };
+  const e = body => ({ app, hasSuperuserAuth: () => true, request: { body: JSON.stringify(body) } });
+  const form = { mode: 'percentage', percentage: 10, account_ids: [], retention_days: 14, daily_limit_mb: 50 };
+  const kept = replay.saveSettings(e(form));
+  assert.equal(kept.mask_selector, '.chat');
+  assert.equal(kept.block_selector, '.avatar');
+  assert.equal(rows.get('mask_selector').value, JSON.stringify('.chat'));
+  const edited = replay.saveSettings(e({ ...form, mask_selector: '.chat,\n.name', block_selector: '' }));
+  assert.equal(edited.mask_selector, '.chat,\n.name');
+  assert.equal(rows.get('mask_selector').value, JSON.stringify('.chat,\n.name'));
+  assert.equal(rows.get('block_selector').value, '""');
+  assert.deepEqual(replay.getSettings(e({})), { ...form, mask_selector: '.chat,\n.name', block_selector: '' });
+  assert.throws(() => replay.saveSettings(e({ ...form, mask_selector: '.a\u0007' })), { status: 400 });
+  assert.equal(rows.get('mask_selector').value, JSON.stringify('.chat,\n.name'));
+
+  rows.delete('mask_selector'); rows.delete('block_selector');
+  assert.equal(replay.saveSettings(e(form)).mask_selector, '');
+  assert.deepEqual(created, ['mask_selector', 'block_selector']);
+  assert.equal(rows.get('mask_selector').value, '""');
 });
 
 test('sampling is stable, covers anonymous users, and accounts need verified identity', () => {
@@ -305,6 +366,28 @@ test('config and start skip account verification for claims that cannot be selec
   fixture.state.settings = { ...defaults, mode: 'accounts', account_ids: ['carol'] };
   global.$http = { send: () => ({ statusCode: 502 }) };
   assert.throws(() => replay.publicConfig(fixture.request({ ...base, accountId: 'carol', authToken: 'carol-token' })), { status: 503 });
+});
+
+test('config and start send the privacy rules whenever they answer enabled', () => {
+  const fixture = serverFixture({ ...defaults, mode: 'percentage', percentage: 100, mask_selector: '.chat,\n[class*="name"]', block_selector: '.avatar' });
+  fixture.app.db = () => ({ newQuery: () => ({ bind: () => ({ one: result => { result.total = 0; } }) }) });
+  const base = { deviceId: 'device-a', platform: 'web' };
+  assert.deepEqual(replay.publicConfig(fixture.request(base)), {
+    enabled: true, uploadIntervalMs: core.LIMITS.uploadIntervalMs, maskTextSelector: '.chat,\n[class*="name"]', blockSelector: '.avatar',
+  });
+  const started = replay.start(fixture.request(base));
+  assert.equal(started.enabled, true);
+  assert.equal(started.maskTextSelector, '.chat,\n[class*="name"]');
+  assert.equal(started.blockSelector, '.avatar');
+
+  fixture.state.settings = { ...defaults, mode: 'percentage', percentage: 100 };
+  assert.equal(replay.publicConfig(fixture.request(base)).maskTextSelector, '');
+  assert.equal(replay.publicConfig(fixture.request(base)).blockSelector, '');
+  assert.equal(replay.start(fixture.request(base)).blockSelector, '');
+
+  fixture.state.settings = { ...defaults, mask_selector: '.chat' };
+  assert.deepEqual(replay.publicConfig(fixture.request(base)), { enabled: false, uploadIntervalMs: core.LIMITS.uploadIntervalMs });
+  assert.deepEqual(replay.start(fixture.request(base)), { enabled: false });
 });
 
 function uploadFixture(settings) {
@@ -718,6 +801,8 @@ test('hook wiring loads handlers inside each isolated route and bounds upload bo
   });
   assert.equal(routes.find(row => row.route === '/api/replay/chunks').middleware, 524288);
   assert.equal(routes.find(row => row.route === '/api/replay/start').middleware, 16384);
+  const saveLimit = routes.find(row => row.method === 'POST' && row.route === '/api/replay/settings').middleware;
+  assert.ok(saveLimit >= 2000 * 131 + 2 * 3 * 20000 + 1000 && saveLimit <= 512 * 1024, 'a full account list and both selector lists fit');
   for (const row of routes) assert.match(row.handler.toString(), /require\(`\$\{__hooks\}\/lib\/replay\.js`\)/);
   assert.equal(crons[0].schedule, '* * * * *');
   assert.equal(routes.some(row => row.route === '/dash/{path...}'), false);

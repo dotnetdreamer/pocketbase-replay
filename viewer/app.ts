@@ -53,6 +53,18 @@ async function loadSettings(): Promise<void> {
   for (const key of ['mode', 'percentage', 'retention_days']) field('settings', key).value = String(settings[key]);
   field('settings', 'daily_limit_mb').value = String(settings.daily_limit_mb ?? 1024);
   field('settings', 'account_ids').value = settings.account_ids.join('\n');
+  // An older server has no selector settings.
+  for (const key of ['mask_selector', 'block_selector']) field('settings', key).value = typeof settings[key] === 'string' ? settings[key] : '';
+}
+
+function selectors(name: string, label: string): string {
+  const value = field('settings', name).value.trim();
+  try {
+    if (value) document.createElement('div').matches(value);
+  } catch {
+    throw new Error(`${label}: this browser cannot read these CSS selectors. Nothing was saved`);
+  }
+  return value;
 }
 
 function cell(row: HTMLTableRowElement, value: string, secondary?: string): void {
@@ -161,6 +173,8 @@ form('settings').addEventListener('submit', (event) => {
       account_ids: field('settings', 'account_ids').value.split(/[\s,]+/).filter(Boolean),
       retention_days: Number(field('settings', 'retention_days').value),
       daily_limit_mb: Number(field('settings', 'daily_limit_mb').value),
+      mask_selector: selectors('mask_selector', 'Mask text in'),
+      block_selector: selectors('block_selector', 'Block elements'),
     });
     await loadSettings(); status('Settings saved');
   });

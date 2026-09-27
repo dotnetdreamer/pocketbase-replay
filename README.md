@@ -2,7 +2,8 @@
 
 DOM session replay for PocketBase. Record screens, clicks, taps, menus and dialogs,
 then watch them in a private dashboard. The recorder has no React, Capacitor or
-application dependency.
+application dependency; in a Capacitor app it finds Capacitor on the page at run
+time instead of importing it.
 
 Install the server extension in **an existing PocketBase** or run **a separate
 PocketBase just for replay**. Both paths use the same hooks and base migration;
@@ -21,7 +22,7 @@ npm run build
 npm pack
 ```
 
-Install the resulting `pocketbase-replay-0.1.3.tgz` in your frontend project.
+Install the resulting `pocketbase-replay-0.2.0.tgz` in your frontend project.
 Once a release is published, `npm install pocketbase-replay` replaces this step.
 The JavaScript client works with bundlers such as Vite; TypeScript is optional.
 
@@ -124,9 +125,6 @@ const replay = startReplay({
     authToken: yourApp.authToken || '',
     room: yourApp.roomCode || '',
   }),
-  blockSelector: '.private-photo, [data-replay-block]',
-  maskTextSelector: '.chat-message, .display-name, [data-replay-mask]',
-  sensitiveText: () => [yourApp.account?.name || '', yourApp.account?.email || ''],
 });
 
 // After sign-in, sign-out or a room change:
@@ -139,19 +137,55 @@ await replay.flush();
 replay.stop();
 ```
 
-Use your app's stable device ID. Access to storage can fail in private browsing,
-so a generated ID should fall back to memory. Empty `endpoint` disables replay.
-The recorder is imported only after the server selects a session.
+That is the whole integration. Which parts of the screen to mask or block is set
+in the dashboard, not in the app (see [Privacy rules](#privacy-rules)). Use your
+app's stable device ID. Access to storage can fail in private browsing, so a
+generated ID should fall back to memory. Empty `endpoint` disables replay. The
+recorder is imported only after the server selects a session.
 
-On web, the package uses `fetch` with a `text/plain` body, and `sendBeacon` at
-page exit. A request sent while the page is hidden uses `keepalive` when its body
-is 60,000 characters or less, so it can finish after the page closes. A framework can
-pass `subscribeActive(listener)` and `initialActive` for its own visibility
-lifecycle. Native adapters should provide these and a `transport.post(url, body)`
-returning parsed JSON. See [`examples/capacitor.ts`](examples/capacitor.ts).
+`metadata()` is read again for every request and event, so return the current
+account and room each time. Only `accountId` and `deviceId` decide which session
+is used; `appVersion` also picks the archived images and fonts in a packaged app.
 
-A custom `post` must throw `ReplayHttpError(status)`, or any error with a numeric
-`status`, for a non-2xx answer. The client sorts failures by that status. An error
+Optional settings:
+
+- `sensitiveText: () => string[]` masks these words, such as names and email
+  addresses, wherever they appear in recorded text.
+- `maskTextSelector` and `blockSelector` add rules of your own. They are joined
+  with the server's rules, and both apply.
+- `transport`, `subscribeActive(listener)`, `initialActive` and `assetBaseUrl`
+  replace the detection below. Each option you pass wins over it.
+
+#### What the package detects on its own
+
+| Part | Android and iOS (Capacitor) | Web and Electron |
+| --- | --- | --- |
+| Requests | `CapacitorHttp` with a `text/plain` body and 8 second timeouts; no beacon | `fetch` with a `text/plain` body, and `sendBeacon` at page exit |
+| Pause and resume | The `App` plugin's `appStateChange` event | `visibilitychange`, and `pagehide` and `pageshow` |
+| Images and fonts | Loaded from this build's archive on the replay server | Loaded from the page, except in the packaged Electron app |
+
+The package reads `window.Capacitor` when `startReplay` runs. It uses the native
+parts only when `Capacitor.getPlatform()` says `android` or `ios` and the plugin
+is registered on the page. `CapacitorHttp` comes with `@capacitor/core`; the
+`App` plugin is there only if your app imports `@capacitor/app` somewhere.
+Without it a native app gets no pause events, only `pagehide` and `pageshow`.
+Inside the Android WebView, `visibilitychange` can arrive late, so it is not used
+on a phone. A missing or unusual `Capacitor` global falls back to the web column.
+
+When the host gives no `initialActive`, recording starts active unless the page
+is hidden. Each resume takes a fresh full snapshot.
+
+A request sent while the page is hidden uses `keepalive` when its body is 60,000
+characters or less, so it can finish after the page closes.
+
+To opt out of one detected part, pass your own: `transport: fetchTransport()`
+keeps `fetch` on a phone, `subscribeActive: () => () => {}` turns the pause
+events off, and `assetBaseUrl: ''` keeps asset URLs as they are. See
+[`examples/capacitor.ts`](examples/capacitor.ts).
+
+A custom `post(url, body)` returns the parsed JSON answer. It must throw
+`ReplayHttpError(status)`, or any error with a numeric `status`, for a non-2xx
+answer. The client sorts failures by that status. An error
 with no status counts as a network failure, like 408, 429 and 5xx: the session and
 its queue are kept and the request is retried. So a transport that throws a plain
 error for a 401 or 403 keeps retrying instead of stopping.
@@ -164,20 +198,25 @@ if (response.status < 200 || response.status >= 300) throw new ReplayHttpError(r
 
 ### Native images and fonts
 
-Capacitor's `https://localhost` assets cannot be loaded by another computer.
-Archive each build's public images and fonts alongside PocketBase:
+A packaged app serves its files from an address only that device can load:
+`https://localhost` (Capacitor on Android), `capacitor://localhost` (Capacitor on
+iOS) or `capacitor-electron://-` (Capacitor Electron). Archive each build's
+public images and fonts alongside PocketBase:
 
 ```sh
 npx pb-replay-assets --from ./dist --target ./backend --version 1.0.0
 ```
 
-Set `assetBaseUrl: 'https://replay.example.com/replay-assets/1.0.0/'` in
-`startReplay`. It rewrites same-origin image/font URLs under `/assets`, `/fonts`
-and `/icons`, including CSS URLs. Archive versions must match `appVersion`.
-The command copies only images and fonts, refuses conflicting existing assets,
-and leaves application JavaScript out. Files are public: use it only on build
-output containing public assets. Keep each version until its recordings expire.
-Apps with other asset layouts can keep those assets at stable public URLs.
+On one of those three origins the recorder rewrites same-origin image and font
+URLs under `/assets`, `/fonts` and `/icons`, including CSS URLs, to
+`{endpoint}/replay-assets/{appVersion}/`. `--version` must therefore equal the
+`appVersion` your metadata sends. With an empty `appVersion`, or one the archive
+command would refuse, URLs are left as they are. Pass `assetBaseUrl` to use
+another address, or `assetBaseUrl: ''` to turn the rewrite off. The command
+copies only images and fonts, refuses conflicting existing assets, and leaves
+application JavaScript out. Files are public: use it only on build output
+containing public assets. Keep each version until its recordings expire. Apps
+with other asset layouts can keep those assets at stable public URLs.
 
 ## Accounts on a separate database
 
@@ -241,9 +280,13 @@ The dashboard edits rows in `replay_settings`:
 | `account_ids` | JSON array of account IDs | `[]` |
 | `retention_days` | 1–365 days | `14` |
 | `daily_limit_mb` | 1–1048576 MB of gzip data a day | `1024` |
+| `mask_selector` | CSS selector list whose text is recorded as `*` | `''` |
+| `block_selector` | CSS selector list whose elements are replaced by empty boxes | `''` |
 
-Rows store their values as JSON text. The migration does not seed a
-`daily_limit_mb` row; the server uses 1024 until the setting is saved. Open
+Rows store their values as JSON text, so a selector row holds a JSON string such
+as `".chat-message, [class*=\"name\"]"`. The migration does not seed the
+`daily_limit_mb`, `mask_selector` or `block_selector` rows; the server uses the
+initial values above until the settings are saved. Open
 clients check settings every 45 seconds. Uploads also check the current gate, so
 turning recording off refuses new chunks immediately. Every minute a sweep
 deletes expired sessions, 20 at a time, for up to about 5 seconds.
@@ -253,6 +296,35 @@ Past it, uploads get 429 `Replay storage budget reached` until older sessions
 leave that window. Chunks are stored as base64 text, a third larger than the bytes
 the limit counts, so at the defaults (1024 MB a day, 14 days) plan for about
 14 GiB of recordings and about 19 GiB of disk.
+
+### Privacy rules
+
+`mask_selector` and `block_selector` are edited in the dashboard under Recording
+settings, as ordinary CSS selector lists. Separate rules with commas: a line break
+alone is a descendant combinator in CSS, not a separator.
+They live on the replay server, so they change without an app release. Each
+holds up to 20,000 characters, and control characters other than tabs and line
+breaks are refused.
+
+`/config` and `/start` send them to the app as `maskTextSelector` and
+`blockSelector` whenever they answer `enabled: true`. The app adds them to its
+built-in rules (inputs, `[contenteditable]`, `[data-replay-mask]`, canvas, media,
+iframes, `[data-replay-block]`) and to any `maskTextSelector` or `blockSelector`
+passed to `startReplay`.
+
+A change applies to what is recorded after it. An open app picks it up at its
+next settings check, within about a minute, then stops its recorder and starts
+it again, so the next full snapshot uses the new rules. Recordings already
+stored keep the rules they were made with.
+
+Before it records, the app checks every rule with the page's own CSS parser. If
+a rule cannot be read, from the server or from the app, the app records nothing
+rather than record that text unmasked, and checks again at the next poll. A
+running recording that receives such a rule stops, keeps what it had already
+recorded, and resumes once the rule is fixed. The dashboard refuses to save a
+selector its own browser cannot read, but an app on an older WebView can still
+reject syntax that a new desktop browser accepts, such as `:has()` before
+Chromium 105. Watch a new recording after each change.
 
 Filter sessions by account, device, a date range in the viewer's local time, or
 any room visited in the session. The room filter matches a whole room code in any
@@ -266,8 +338,10 @@ skipped.
 - All input values are masked. Contenteditable text is masked too.
 - Canvas, iframes, video and audio are blocked. No screenshots, WebGL capture,
   microphone, console or network payload recording is enabled.
-- Text already rendered outside an input needs your app's `maskTextSelector`,
-  `blockSelector` or `sensitiveText` rules. Review these against your actual UI.
+- Text already rendered outside an input needs a mask or block rule, set in the
+  dashboard (see [Privacy rules](#privacy-rules)) or passed to `startReplay`, or
+  a `sensitiveText` list. Review these against your actual UI. A rule the app
+  cannot parse stops recording instead of leaving text unmasked.
 - Sensitive attributes are removed, and so is every `data-*` attribute outside a
   short safe list, which can make some layouts replay slightly off. URL query
   strings and navigation fragments are stripped. Your own secrets embedded in URL
@@ -284,8 +358,8 @@ skipped.
   the session, and the next poll decides whether to start another. Any other 4xx,
   such as 400, 409 or 422, drops the queue and takes a fresh snapshot, and three
   in a row stop recording until the account or device changes.
-- Chunks normally flush every 25 seconds. Native pause flushes through the
-  injected transport. At web page exit, the chunk still being compressed, the
+- Chunks normally flush every 25 seconds. Native pause flushes through
+  `CapacitorHttp` or the injected transport. At web page exit, the chunk still being compressed, the
   pending batches and the buffer are packed into one chunk per room, up to 256 KB
   in all before compression, and sent with queued chunks by `sendBeacon` within a
   60 KB budget. A chunk whose `keepalive` upload is already under way is not sent
@@ -311,8 +385,8 @@ skipped.
   page-exit tail, which is compressed synchronously.
 
 DOM replay reconstructs the page. External assets must remain available; it is
-not a pixel video archive. Canvas areas remain blank. Avoid changing your UI's
-privacy rules without a replay inspection.
+not a pixel video archive. Canvas areas remain blank. After changing your UI or
+its privacy rules, watch a new recording to check them.
 
 ## Development and release
 
@@ -322,8 +396,9 @@ npm run build
 npm pack --dry-run
 ```
 
-Tests cover queue bounds, retries, snapshot recovery, masking, settings, lifecycle,
-server validation, account verification, erasure and migration isolation.
+Tests cover queue bounds, retries, snapshot recovery, masking, settings, server
+privacy rules, lifecycle, Capacitor detection, server validation, account
+verification, erasure and migration isolation.
 The application integrating this package should also measure frame times, CPU
 and bytes per minute on its own screens and devices. `getMetrics()` reports
 wire bytes and package processing time; its timing does not include all of

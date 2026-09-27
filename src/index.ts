@@ -1,14 +1,11 @@
 import { gzip, gzipSync, strToU8 } from 'fflate';
+import { autoLifecycle, nativeTransport, pageVisible } from './detect';
 import { createReplay } from './engine';
+import { ReplayHttpError } from './errors';
 import type { ReplayController, ReplayOptions, ReplayTransport } from './types';
 
 export type { ReplayController, ReplayOptions, ReplayMetadata, ReplayMetrics, ReplayTransport } from './types';
-
-export class ReplayHttpError extends Error {
-  constructor(public readonly status: number) {
-    super(`Replay HTTP ${status}`);
-  }
-}
+export { ReplayHttpError };
 
 export function fetchTransport(): ReplayTransport {
   return {
@@ -30,7 +27,11 @@ export function fetchTransport(): ReplayTransport {
 }
 
 export function startReplay(options: ReplayOptions): ReplayController {
-  return createReplay({ ...options, transport: options.transport ?? fetchTransport() }, {
+  return createReplay({
+    ...options,
+    transport: options.transport ?? nativeTransport() ?? fetchTransport(),
+    initialActive: options.initialActive ?? pageVisible(),
+  }, {
     now: () => Date.now(),
     performanceNow: () => typeof performance === 'undefined' ? Date.now() : performance.now(),
     schedule: (callback, ms) => setTimeout(callback, ms),
@@ -67,7 +68,7 @@ export function startReplay(options: ReplayOptions): ReplayController {
         window.addEventListener('pageshow', pageshow);
       }
       let remove: (() => void) | undefined;
-      try { remove = options.subscribeActive?.((value) => active(value)); } catch { /* Recording stays optional. */ }
+      try { remove = (options.subscribeActive ?? autoLifecycle)((value) => active(value)); } catch { /* Recording stays optional. */ }
       return () => {
         if (typeof window !== 'undefined') {
           window.removeEventListener('pagehide', pagehide);
@@ -75,6 +76,9 @@ export function startReplay(options: ReplayOptions): ReplayController {
         }
         try { remove?.(); } catch { /* Cleanup must not reach the app. */ }
       };
+    },
+    validSelector: (selector) => {
+      try { document.createElement('div').matches(selector); return true; } catch { return false; }
     },
   });
 }

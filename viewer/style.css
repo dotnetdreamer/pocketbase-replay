@@ -15,6 +15,8 @@ input:focus, button:focus-visible, select:focus, textarea:focus { outline: 2px s
 summary { cursor: pointer; font-weight: 600; }
 #settings { display: grid; grid-template-columns: 1fr 1fr 2fr 1fr 1fr; align-items: start; gap: 16px; margin-top: 18px; }
 #settings p { grid-column: 2 / -1; }
+#settings .selectors { grid-column: 1 / -1; }
+#settings .selectors textarea { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 13px; resize: vertical; }
 .filters { display: grid; grid-template-columns: 1fr 1fr .8fr 1fr 1fr auto; align-items: end; gap: 12px; }
 .table-wrap { overflow-x: auto; margin-top: 20px; }
 table { border-collapse: collapse; width: 100%; text-align: left; }

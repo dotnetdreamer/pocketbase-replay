@@ -10,8 +10,9 @@ const LIMITS = {
   uploadIntervalMs: 25000,
   ipBytesPerHour: 64 * 1024 * 1024,
   clockSkewMs: 24 * 60 * 60 * 1000,
+  selectorChars: 20000,
 };
-const DEFAULTS = { mode: 'off', percentage: 0, account_ids: [], retention_days: 14, daily_limit_mb: 1024 };
+const DEFAULTS = { mode: 'off', percentage: 0, account_ids: [], retention_days: 14, daily_limit_mb: 1024, mask_selector: '', block_selector: '' };
 
 function fail(status, message) {
   const error = new Error(message);
@@ -33,6 +34,13 @@ function text(value, name, max, required) {
 
 function integer(value, name, min, max) {
   if (!Number.isSafeInteger(value) || value < min || value > max) fail(400, 'Invalid ' + name);
+  return value;
+}
+
+// Tabs and line breaks are allowed for layout; rules are still separated by commas.
+function selector(value, name) {
+  if (value === undefined || value === null) return '';
+  if (typeof value !== 'string' || value.length > LIMITS.selectorChars || /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(value)) fail(400, 'Invalid ' + name);
   return value;
 }
 
@@ -62,6 +70,8 @@ function settings(value) {
     account_ids: Array.from(new Set(accounts)),
     retention_days: integer(value.retention_days, 'retention_days', 1, 365),
     daily_limit_mb: integer(value.daily_limit_mb, 'daily_limit_mb', 1, 1048576),
+    mask_selector: selector(value.mask_selector, 'mask_selector'),
+    block_selector: selector(value.block_selector, 'block_selector'),
   };
 }
 
@@ -118,4 +128,4 @@ function gaps(items, previous) {
   return missing;
 }
 
-module.exports = { LIMITS: LIMITS, DEFAULTS: DEFAULTS, fail: fail, object: object, text: text, integer: integer, metadata: metadata, settings: settings, enabled: enabled, chunk: chunk, page: page, authURL: authURL, gaps: gaps };
+module.exports = { LIMITS: LIMITS, DEFAULTS: DEFAULTS, fail: fail, object: object, text: text, integer: integer, selector: selector, metadata: metadata, settings: settings, enabled: enabled, chunk: chunk, page: page, authURL: authURL, gaps: gaps };

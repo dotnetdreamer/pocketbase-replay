@@ -5,7 +5,31 @@ const PRIVATE_ATTRIBUTES = /(?:password|secret|token|authorization|cookie|email|
 const SAFE_DATA_ATTRIBUTES = /^(?:data-state|data-side|data-align|data-orientation|data-disabled|data-replay-block|data-replay-mask)$/;
 const STATIC_ASSET = /^\/(?:assets|fonts|icons)\/(?:[A-Za-z0-9._-]+\/)*[A-Za-z0-9._-]+\.(?:avif|gif|ico|jpe?g|png|svg|webp|woff2?|ttf|otf)$/i;
 
+const PACKAGED_ORIGINS = ['https://localhost', 'capacitor://localhost', 'capacitor-electron://-'];
+const ASSET_VERSION = /^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/;
+
 export interface ReplayAssetOptions { assetBaseUrl?: string; assetOrigin?: string }
+
+let originSeen: string | undefined;
+let originPackaged = false;
+
+function packagedOrigin(value: string): boolean {
+  if (value === originSeen) return originPackaged;
+  let origin = value;
+  // An opaque origin arrives as the page URL; its scheme and host still name the app.
+  if (PACKAGED_ORIGINS.indexOf(origin) < 0) {
+    try { const url = new URL(value); origin = `${url.protocol}//${url.host}`; } catch { origin = ''; }
+  }
+  originSeen = value;
+  originPackaged = PACKAGED_ORIGINS.indexOf(origin) >= 0;
+  return originPackaged;
+}
+
+// Other computers cannot load a packaged app's local files, so they come from the archive for this build.
+export function packagedAssetBase(endpoint: string, assetOrigin: string | undefined, appVersion: string | undefined): string | undefined {
+  if (!endpoint || !assetOrigin || !appVersion || !ASSET_VERSION.test(appVersion) || !packagedOrigin(assetOrigin)) return undefined;
+  return `${endpoint}/replay-assets/${appVersion}/`;
+}
 
 export function cleanUrl(value: string, assets: ReplayAssetOptions = {}): string {
   value = value.trim();

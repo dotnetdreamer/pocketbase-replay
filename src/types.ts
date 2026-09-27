@@ -83,4 +83,5 @@ export interface ReplayRuntime {
   compress: (raw: string) => Promise<Uint8Array>;
   compressSync: (raw: string) => Uint8Array;
   subscribe?: (active: (active: boolean, unloading?: boolean) => void) => (() => void);
+  validSelector?: (selector: string) => boolean;
 }

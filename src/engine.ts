@@ -1,4 +1,4 @@
-import { base64, byteLength, serializeEvent } from './privacy';
+import { base64, byteLength, packagedAssetBase, serializeEvent } from './privacy';
 import type { RecorderAdapter, ReplayChunk, ReplayController, ReplayEvent, ReplayMetadata, ReplayMetrics, ReplayOptions, ReplayRuntime } from './types';
 
 export const REPLAY_LIMITS = {
@@ -33,6 +33,15 @@ function pageHidden(): boolean {
 
 function retryable(status: number): boolean {
   return !(status > 0) || status === 408 || status === 429 || status >= 500;
+}
+
+// Null marks a rule the client cannot read; recording then waits rather than go unmasked.
+function serverSelector(value: unknown): string | null {
+  return value === undefined || value === null ? '' : typeof value === 'string' ? value : null;
+}
+
+function joinSelectors(host: unknown, server: string): string {
+  return [host == null ? '' : String(host), server].map((value) => value.trim()).filter(Boolean).join(',');
 }
 
 export function createReplay(options: ReplayOptions, runtime: ReplayRuntime): ReplayController {
@@ -76,6 +85,9 @@ export function createReplay(options: ReplayOptions, runtime: ReplayRuntime): Re
   let configTimer: unknown;
   let flushTimer: unknown;
   let removeLifecycle: (() => void) | undefined;
+  let serverMask: string | null = '';
+  let serverBlock: string | null = '';
+  let captureRules = '';
 
   function metadata(): ReplayMetadata | null {
     try {
@@ -91,6 +103,26 @@ export function createReplay(options: ReplayOptions, runtime: ReplayRuntime): Re
   }
 
   function identityOf(value: ReplayMetadata): string { return `${value.deviceId}\n${value.accountId ?? ''}`; }
+
+  function rememberRules(answer: Record<string, unknown>): void {
+    serverMask = serverSelector(answer.maskTextSelector);
+    serverBlock = serverSelector(answer.blockSelector);
+  }
+
+  function rulesKey(): string { return JSON.stringify([serverMask, serverBlock]); }
+
+  // rrweb skips a selector it cannot parse, which would leave that text unmasked.
+  function captureOptions(): ReplayOptions | null {
+    if (serverMask === null || serverBlock === null) return null;
+    const maskTextSelector = joinSelectors(options.maskTextSelector, serverMask);
+    const blockSelector = joinSelectors(options.blockSelector, serverBlock);
+    try {
+      for (const selector of [maskTextSelector, blockSelector]) {
+        if (selector && runtime.validSelector && !runtime.validSelector(selector)) return null;
+      }
+    } catch { return null; }
+    return { ...options, maskTextSelector, blockSelector };
+  }
 
   function stopCapture(): void {
     metrics.recording = false;
@@ -156,10 +188,12 @@ export function createReplay(options: ReplayOptions, runtime: ReplayRuntime): Re
       if (awaitingSnapshot && event.type !== 2 && event.type !== 4) return;
       const nextRoom = value.room ?? '';
       if (nextRoom !== room) { seal(); room = nextRoom; void pump(); }
+      const assetOrigin = typeof location === 'undefined' ? undefined
+        : location.origin === 'null' ? location.href : location.origin;
       const json = serializeEvent(event, options.sensitiveText?.() ?? [], {
-        assetBaseUrl: options.assetBaseUrl,
-        assetOrigin: typeof location === 'undefined' ? undefined
-          : location.origin === 'null' ? location.href : location.origin,
+        assetBaseUrl: options.assetBaseUrl !== undefined ? options.assetBaseUrl
+          : packagedAssetBase(endpoint, assetOrigin, value.appVersion),
+        assetOrigin,
       });
       const bytes = byteLength(json) + 1;
       if (bytes > REPLAY_LIMITS.eventBytes) { metrics.droppedEvents++; blockOversize(); return; }
@@ -182,8 +216,11 @@ export function createReplay(options: ReplayOptions, runtime: ReplayRuntime): Re
     try {
       adapter = adapter ?? await runtime.loadRecorder();
       if (expected !== epoch || closed || !active || !session) return;
+      const settings = captureOptions();
+      if (!settings) { metrics.errors++; return; }
+      captureRules = rulesKey();
       awaitingSnapshot = true;
-      const stop = adapter.start(receive, options);
+      const stop = adapter.start(receive, settings);
       if (expected !== epoch || closed || !active || localBlocked) { stop?.(); return; }
       captureStop = stop;
       metrics.recording = Boolean(stop);
@@ -375,8 +412,12 @@ export function createReplay(options: ReplayOptions, runtime: ReplayRuntime): Re
       interval = Math.max(20000, Math.min(30000, Number(config.uploadIntervalMs) || 25000));
       // Back online: a network failure need not wait out its back-off. A 429 or 5xx still does.
       if (retryUnreachable) { retryAt = 0; retryDelay = 0; retryUnreachable = false; }
+      rememberRules(config);
+      // A fresh capture takes a full snapshot under the new rules.
+      if (captureStop && rulesKey() !== captureRules) stopCapture();
       if (!active || localBlocked) return;
       if (!session) {
+        if (!captureOptions()) { metrics.errors++; return; }
         metrics.networkBytes += byteLength(body);
         const result = await options.transport!.post(`${endpoint}/api/replay/start`, body) as Record<string, unknown>;
         if (closed || identityOf(metadata() ?? value) !== expectedIdentity) { refreshAgain = !closed; return; }
@@ -387,6 +428,7 @@ export function createReplay(options: ReplayOptions, runtime: ReplayRuntime): Re
           : typeof result.expiresAt === 'number' ? result.expiresAt : Date.parse(String(result.expiresAt));
         if (!Number.isFinite(expiresAt)) { disable(); return; }
         session = { sessionId: result.sessionId, token: result.token, expiresAt };
+        rememberRules(result);
         metrics.sessionId = session.sessionId;
         seq = 0; retryAt = 0; retryDelay = 0; rejected = 0;
         room = value.room ?? '';
