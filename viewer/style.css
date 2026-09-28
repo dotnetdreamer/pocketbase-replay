@@ -11,6 +11,8 @@ button { cursor: pointer; background: #254c79; white-space: nowrap; }
 button:hover { background: #326399; } button:disabled { opacity: .4; cursor: default; }
 button.danger { background: #7b2d36; } button.danger:hover { background: #9a3a45; }
 td button + button { margin-left: 8px; } .account-tools { margin: 12px 0 0; }
+.toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 10; padding: 10px 18px; border-radius: 8px; background: #1f7a4d; color: #fff; box-shadow: 0 6px 20px rgba(0, 0, 0, .35); }
+.toast[hidden] { display: none; }
 input:focus, button:focus-visible, select:focus, textarea:focus { outline: 2px solid #73b7ff; outline-offset: 2px; }
 .card { background: #18212f; border: 1px solid #2e3c50; border-radius: 12px; padding: 20px; margin: 20px 0; }
 .login { max-width: 400px; margin: 48px auto; display: grid; gap: 16px; }

@@ -19,6 +19,14 @@ function status(message: string, error = false): void {
   $('status').classList.toggle('error', error);
 }
 
+let toastTimer = 0;
+function toast(message: string): void {
+  $('toast').textContent = message;
+  $('toast').hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = window.setTimeout(() => { $('toast').hidden = true; }, 3000);
+}
+
 // Whatever a proxy put in front of /dash/replay, e.g. '/replay'; empty when served at the root.
 const base = location.pathname.replace(/\/dash\/replay\/?$/, '');
 
@@ -203,7 +211,8 @@ form('login').addEventListener('submit', (event) => {
 form('settings').addEventListener('submit', (event) => {
   event.preventDefault();
   run(async () => {
-    await request('/api/replay/settings', {
+    // Built first, so a bad selector is reported before anything is asked.
+    const settings = {
       mode: field('settings', 'mode').value,
       percentage: Number(field('settings', 'percentage').value),
       account_ids: field('settings', 'account_ids').value.split(/[\s,]+/).filter(Boolean),
@@ -211,8 +220,12 @@ form('settings').addEventListener('submit', (event) => {
       daily_limit_mb: Number(field('settings', 'daily_limit_mb').value),
       mask_selector: selectors('mask_selector', 'Mask text in'),
       block_selector: selectors('block_selector', 'Block elements'),
-    });
-    await loadSettings(); status('Settings saved');
+    };
+    if (!confirm('Save these recording settings? Open apps pick them up within a minute.')) return;
+    await request('/api/replay/settings', settings);
+    await loadSettings();
+    status('');
+    toast('Settings saved');
   });
 });
 form('filters').addEventListener('submit', (event) => { event.preventDefault(); page = 1; run(list); });
