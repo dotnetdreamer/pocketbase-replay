@@ -9,6 +9,8 @@ label { display: flex; flex-direction: column; gap: 5px; font-size: 13px; color:
 input, select, textarea, button { font: inherit; border: 1px solid #3c4b61; border-radius: 7px; padding: 9px 12px; background: #151e2c; color: #edf2f7; min-width: 0; }
 button { cursor: pointer; background: #254c79; white-space: nowrap; }
 button:hover { background: #326399; } button:disabled { opacity: .4; cursor: default; }
+button.danger { background: #7b2d36; } button.danger:hover { background: #9a3a45; }
+td button + button { margin-left: 8px; } .account-tools { margin: 12px 0 0; }
 input:focus, button:focus-visible, select:focus, textarea:focus { outline: 2px solid #73b7ff; outline-offset: 2px; }
 .card { background: #18212f; border: 1px solid #2e3c50; border-radius: 12px; padding: 20px; margin: 20px 0; }
 .login { max-width: 400px; margin: 48px auto; display: grid; gap: 16px; }

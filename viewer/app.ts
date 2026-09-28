@@ -11,6 +11,7 @@ let page = 1;
 let totalPages = 1;
 let player: rrwebPlayer | undefined;
 let playbackGeneration = 0;
+let watching = '';
 try { token = sessionStorage.getItem('pocketbase-replay-admin') ?? ''; } catch { /* Memory-only login. */ }
 
 function status(message: string, error = false): void {
@@ -21,9 +22,9 @@ function status(message: string, error = false): void {
 // Whatever a proxy put in front of /dash/replay, e.g. '/replay'; empty when served at the root.
 const base = location.pathname.replace(/\/dash\/replay\/?$/, '');
 
-async function request(path: string, body?: unknown): Promise<any> {
+async function request(path: string, body?: unknown, method = body === undefined ? 'GET' : 'POST'): Promise<any> {
   const response = await fetch(base + path, {
-    method: body === undefined ? 'GET' : 'POST',
+    method,
     headers: { Authorization: token, 'Content-Type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body),
     cache: 'no-store',
@@ -35,6 +36,7 @@ async function request(path: string, body?: unknown): Promise<any> {
 
 function closePlayer(): void {
   playbackGeneration++;
+  watching = '';
   player?.$destroy();
   player = undefined;
   $('player').replaceChildren();
@@ -98,7 +100,11 @@ async function list(): Promise<void> {
     button.textContent = 'Watch';
     button.disabled = session.chunkCount === 0;
     button.addEventListener('click', () => run(() => watch(session.sessionId)));
-    row.insertCell().append(button);
+    const remove = document.createElement('button');
+    remove.textContent = 'Delete';
+    remove.className = 'danger';
+    remove.addEventListener('click', () => run(() => removeSession(session)));
+    row.insertCell().append(button, remove);
     body.append(row);
   }
   if (!result.items.length) { const row = document.createElement('tr'); cell(row, 'No sessions match these filters'); body.append(row); }
@@ -107,8 +113,35 @@ async function list(): Promise<void> {
   $<HTMLButtonElement>('next').disabled = page >= totalPages;
 }
 
+async function removeSession(session: { sessionId: string; accountId: string; startedAt: number }): Promise<void> {
+  const who = session.accountId || 'Guest';
+  if (!confirm(`Delete the recording of ${who} from ${new Date(session.startedAt).toLocaleString()}? This cannot be undone.`)) return;
+  await request(`/api/replay/sessions/${encodeURIComponent(session.sessionId)}`, undefined, 'DELETE');
+  if (watching === session.sessionId) closePlayer();
+  await list();
+  status('Recording deleted');
+}
+
+// The server deletes 200 sessions per call and reports what is left.
+async function eraseAccountRecordings(): Promise<void> {
+  const account = field('filters', 'account').value.trim();
+  if (!account) { status('Enter an account ID in the Account filter first', true); return; }
+  if (!confirm(`Delete every recording of account ${account}? This cannot be undone.`)) return;
+  let deleted = 0;
+  for (let batch = 0; batch < 100; batch++) {
+    const result = await request(`/api/replay/accounts/${encodeURIComponent(account)}`, undefined, 'DELETE');
+    deleted += result.deletedSessions;
+    if (result.remainingSessions === 0) break;
+  }
+  closePlayer();
+  page = 1;
+  await list();
+  status(`Deleted ${deleted} recording(s) of account ${account}`);
+}
+
 async function watch(sessionId: string): Promise<void> {
   closePlayer();
+  watching = sessionId;
   const generation = playbackGeneration;
   status('Loading recording...');
   const chunks: StoredChunk[] = [];
@@ -183,6 +216,7 @@ form('settings').addEventListener('submit', (event) => {
   });
 });
 form('filters').addEventListener('submit', (event) => { event.preventDefault(); page = 1; run(list); });
+$('erase-account').addEventListener('click', () => run(eraseAccountRecordings));
 $('previous').addEventListener('click', () => { page = Math.max(1, page - 1); run(list); });
 $('next').addEventListener('click', () => { page = Math.min(totalPages, page + 1); run(list); });
 $('close-recording').addEventListener('click', closePlayer);

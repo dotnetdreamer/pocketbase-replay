@@ -274,6 +274,12 @@ endpoint internal where possible. The dashboard's superuser API also supports
 `DELETE /api/replay/accounts/{id}` with the same batched response. Sessions
 recorded without an account are not linked to it and expire with retention.
 
+Without the erasure route (leave `REPLAY_ERASE_KEY` unset and it answers 503),
+delete from the dashboard instead: **Delete** on a session row removes that
+recording, and **Delete every recording of the account in the filter** removes
+all of one account's sessions, in batches of 200 until none are left. Neither
+blocks that account from being recorded again.
+
 ## Settings and playback
 
 The dashboard edits rows in `replay_settings`:
