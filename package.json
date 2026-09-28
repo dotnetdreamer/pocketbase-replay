@@ -18,6 +18,7 @@
     "scripts",
     "tsconfig.json",
     "README.md",
+    "docs",
     "LICENSE",
     "examples"
   ],
