@@ -110,6 +110,11 @@ name of letters, digits and hyphens; anything else is ignored with a `replay:`
 warning in the log. Use `CF-Connecting-IP` behind Cloudflare's proxy. With the
 variable unset, the hooks leave the setting alone.
 
+The server also works under a path on another site, e.g. a proxy that strips
+`/replay` from `https://example.com/replay/*` before passing it on. Set the app's
+`endpoint` to `https://example.com/replay` and open the dashboard at
+`https://example.com/replay/dash/replay`.
+
 ### Connect your app
 
 ```js

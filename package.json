@@ -1,6 +1,6 @@
 {
   "name": "pocketbase-replay",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "DOM session replay for PocketBase, with a browser recorder and private dashboard",
   "type": "module",
   "license": "MIT",

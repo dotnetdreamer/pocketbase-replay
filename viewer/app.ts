@@ -18,8 +18,11 @@ function status(message: string, error = false): void {
   $('status').classList.toggle('error', error);
 }
 
+// Whatever a proxy put in front of /dash/replay, e.g. '/replay'; empty when served at the root.
+const base = location.pathname.replace(/\/dash\/replay\/?$/, '');
+
 async function request(path: string, body?: unknown): Promise<any> {
-  const response = await fetch(path, {
+  const response = await fetch(base + path, {
     method: body === undefined ? 'GET' : 'POST',
     headers: { Authorization: token, 'Content-Type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body),
