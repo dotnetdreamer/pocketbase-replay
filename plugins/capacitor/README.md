@@ -161,3 +161,13 @@ npm test
 Android SDK
 
 `npm run verify:ios` compiles the iOS layer and needs macOS with Xcode
+
+Run the native lifecycle tests on an installed iOS simulator:
+
+```sh
+npm run test:ios -- -destination 'platform=iOS Simulator,name=iPhone 17'
+```
+
+The four XCTest cases send UIKit notifications through Capacitor listeners and
+check pause, resume, listener removal and plugin release. They also check that
+background and foreground notifications do not send duplicate active events.

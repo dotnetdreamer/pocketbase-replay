@@ -19,6 +19,13 @@ let package = Package(
                 .product(name: "Capacitor", package: "capacitor-swift-pm"),
                 .product(name: "Cordova", package: "capacitor-swift-pm")
             ],
-            path: "ios/Sources/PocketBaseReplayPlugin")
+            path: "ios/Sources/PocketBaseReplayPlugin"),
+        .testTarget(
+            name: "PocketBaseReplayPluginTests",
+            dependencies: [
+                "PocketBaseReplayPlugin",
+                .product(name: "Capacitor", package: "capacitor-swift-pm")
+            ],
+            path: "ios/Tests/PocketBaseReplayPluginTests")
     ]
 )

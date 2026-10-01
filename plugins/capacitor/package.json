@@ -35,6 +35,7 @@
     "android/build.gradle",
     "dist/",
     "ios/Sources/",
+    "ios/Tests/",
     "Package.swift",
     "CapacitorPocketbaseReplay.podspec"
   ],
@@ -42,6 +43,7 @@
     "build": "node scripts/build.mjs",
     "pretest": "npm run build",
     "test": "node --import tsx --test test/*.test.ts",
+    "test:ios": "xcodebuild -scheme CapacitorPocketbaseReplay test",
     "verify": "npm run verify:web && npm run verify:android && npm run verify:ios",
     "verify:web": "npm test",
     "verify:android": "node scripts/gradle.mjs clean build",
