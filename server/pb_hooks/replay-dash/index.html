@@ -32,23 +32,33 @@
         <p>Changes reach open apps within a minute. Turning recording off stops new uploads. New selectors apply from the app's next full snapshot, and a selector the app cannot read stops its recording instead of leaving text unmasked</p>
       </form>
     </details>
-    <section class="card">
-      <form id="filters" class="filters">
-        <label>Account<input name="account" autocomplete="off"></label>
-        <label>Device<input name="device" autocomplete="off"></label>
-        <label>Room<input name="room" autocomplete="off"></label>
-        <label>From<input name="from" type="date"></label>
-        <label>Through<input name="to" type="date"></label>
-        <button type="submit">Find sessions</button>
-      </form>
-      <p class="account-tools"><button type="button" id="erase-account" class="danger">Delete every recording of the account in the filter</button></p>
-      <div class="table-wrap"><table><thead><tr><th>Started</th><th>Player / device</th><th>Platform</th><th>Room</th><th>Size</th><th></th></tr></thead><tbody id="sessions"></tbody></table></div>
-      <nav class="paging"><button id="previous">Previous</button><span id="page"></span><button id="next">Next</button></nav>
-    </section>
-    <section id="recording" class="card" hidden>
-      <div class="recording-heading"><h2 id="recording-title">Recording</h2><button id="close-recording">Close</button></div>
-      <p id="recording-info"></p><p id="gaps" role="status"></p><div id="player"></div>
-    </section>
+    <div class="workspace">
+      <section class="card sessions-panel" aria-label="Sessions">
+        <form id="filters" class="filters">
+          <label>Account<input name="account" autocomplete="off"></label>
+          <label>Device<input name="device" autocomplete="off"></label>
+          <label>Room<input name="room" autocomplete="off"></label>
+          <label>From<input name="from" type="date"></label>
+          <label>Through<input name="to" type="date"></label>
+          <button type="submit">Find sessions</button>
+        </form>
+        <p class="account-tools"><button type="button" id="erase-account" class="danger">Delete every recording of the account in the filter</button></p>
+        <p id="session-count" class="session-count"></p>
+        <div id="session-scroll" class="session-scroll">
+          <ul id="sessions" class="session-list"></ul>
+          <div id="sessions-end" class="sessions-end"><span id="sessions-state"></span><button type="button" id="load-more" hidden>Load more</button></div>
+        </div>
+      </section>
+      <section id="viewer" class="card viewer" aria-label="Recording">
+        <div id="no-recording" class="no-recording"><h2>No recording open</h2><p>Choose a session to watch it here</p></div>
+        <div id="recording" hidden>
+          <div class="recording-heading"><h2 id="recording-title">Recording</h2><button id="close-recording">Close</button></div>
+          <p id="recording-info"></p><p id="gaps" role="status"></p><p id="idle"></p>
+          <div id="player"></div>
+          <p id="clock" class="clock"></p>
+        </div>
+      </section>
+    </div>
   </main>
   <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
 </body>

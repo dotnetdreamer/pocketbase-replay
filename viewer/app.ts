@@ -1,17 +1,32 @@
 import rrwebPlayer from 'rrweb-player';
 import 'rrweb-player/dist/style.css';
 import './style.css';
-import { dayBound, recoverEvents, type StoredChunk } from './decode';
+import { dayBound, IDLE_KEPT_MS, recordedAt, recoverEvents, shortenIdle, type IdlePeriod, type StoredChunk } from './decode';
+import { keepPlaying } from './player';
+
+interface Session {
+  sessionId: string; accountId: string; deviceId: string; platform: string; appVersion: string;
+  rooms: string[]; startedAt: number; compressedBytes: number; chunkCount: number;
+}
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 const form = (id: string) => $(id) as HTMLFormElement;
 const field = (id: string, name: string) => form(id).elements.namedItem(name) as HTMLInputElement;
 let token = '';
-let page = 1;
+let filters = new URLSearchParams();
+let page = 0;
 let totalPages = 1;
+let totalItems = 0;
+let listGeneration = 0;
+let loadingList = -1;
+const listed = new Set<string>();
 let player: rrwebPlayer | undefined;
 let playbackGeneration = 0;
 let watching = '';
+let idle: IdlePeriod[] = [];
+let recordingGaps = 0;
+let playbackErrors = 0;
+let clockText = '';
 try { token = sessionStorage.getItem('pocketbase-replay-admin') ?? ''; } catch { /* Memory-only login. */ }
 
 function status(message: string, error = false): void {
@@ -42,6 +57,15 @@ async function request(path: string, body?: unknown, method = body === undefined
   return data;
 }
 
+function markWatching(): void {
+  for (const item of $('sessions').children) {
+    const current = (item as HTMLElement).dataset.session === watching;
+    item.classList.toggle('watching', current);
+    const open = item.querySelector('.session-open');
+    if (current) open?.setAttribute('aria-current', 'true'); else open?.removeAttribute('aria-current');
+  }
+}
+
 function closePlayer(): void {
   playbackGeneration++;
   watching = '';
@@ -49,13 +73,25 @@ function closePlayer(): void {
   player = undefined;
   $('player').replaceChildren();
   $('recording').hidden = true;
+  $('no-recording').hidden = false;
+  markWatching();
+}
+
+function resetList(): void {
+  listGeneration++;
+  page = 0;
+  totalPages = 1;
+  totalItems = 0;
+  listed.clear();
+  $('sessions').replaceChildren();
+  listState();
 }
 
 function signOut(): void {
   token = '';
   try { sessionStorage.removeItem('pocketbase-replay-admin'); } catch { /* Memory-only login. */ }
   closePlayer();
-  $('sessions').replaceChildren();
+  resetList();
   $('dashboard').hidden = true;
   $('logout').hidden = true;
   $('login').hidden = false;
@@ -80,54 +116,116 @@ function selectors(name: string, label: string): string {
   return value;
 }
 
-function cell(row: HTMLTableRowElement, value: string, secondary?: string): void {
-  const td = row.insertCell();
-  td.textContent = value;
-  if (secondary) { const small = document.createElement('small'); small.textContent = secondary; td.append(small); }
+function line(main: string, aside: string): HTMLSpanElement {
+  const row = document.createElement('span');
+  const text = document.createElement('span');
+  const small = document.createElement('small');
+  text.textContent = main;
+  small.textContent = aside;
+  row.append(text, small);
+  return row;
 }
 
-async function list(): Promise<void> {
-  const query = new URLSearchParams({ page: String(page) });
+function sessionItem(session: Session): HTMLLIElement {
+  const item = document.createElement('li');
+  item.className = 'session';
+  item.dataset.session = session.sessionId;
+  const who = session.accountId || 'Guest';
+  const started = new Date(session.startedAt).toLocaleString();
+  const open = document.createElement('button');
+  open.type = 'button';
+  open.className = 'session-open';
+  open.disabled = session.chunkCount === 0;
+  open.append(
+    line(who, started),
+    line(session.deviceId, session.chunkCount ? `${(session.compressedBytes / 1024).toFixed(1)} KB` : 'No recording data'),
+    line([session.platform, session.appVersion].filter(Boolean).join(' '), session.rooms.join(', ') || 'No room'),
+  );
+  open.addEventListener('click', () => run(() => watch(session.sessionId)));
+  const remove = document.createElement('button');
+  remove.type = 'button';
+  remove.className = 'danger';
+  remove.textContent = 'Delete';
+  remove.setAttribute('aria-label', `Delete the recording of ${who} from ${started}`);
+  remove.addEventListener('click', () => run(() => removeSession(session, item)));
+  item.append(open, remove);
+  return item;
+}
+
+function listState(): void {
+  const loading = loadingList === listGeneration;
+  const more = page < totalPages;
+  $('sessions-state').textContent = loading ? 'Loading sessions...'
+    : !page ? '' : !totalItems ? 'No sessions match these filters' : more ? '' : 'No more sessions';
+  $('load-more').hidden = loading || !page || !more;
+  $('session-count').textContent = !page ? ''
+    : `${totalItems} session${totalItems === 1 ? '' : 's'}${more ? `, ${listed.size} loaded` : ''}`;
+}
+
+function nearListEnd(): boolean {
+  const box = $('session-scroll');
+  return box.scrollHeight - box.scrollTop - box.clientHeight < 300;
+}
+
+async function loadPage(number: number, generation: number): Promise<void> {
+  const query = new URLSearchParams(filters);
+  query.set('page', String(number));
+  const result = await request(`/api/replay/sessions?${query}`);
+  if (generation !== listGeneration) return;
+  page = Math.max(page, number);
+  totalPages = Math.max(1, result.totalPages);
+  totalItems = result.totalItems;
+  for (const session of result.items as Session[]) {
+    // A session started since the first page pushes the others down, so one can come round again.
+    if (listed.has(session.sessionId)) continue;
+    listed.add(session.sessionId);
+    $('sessions').append(sessionItem(session));
+  }
+  markWatching();
+}
+
+// The list loads the server's 30-session pages one at a time as it is scrolled.
+async function loadMore(): Promise<void> {
+  const generation = listGeneration;
+  if (loadingList === generation || page >= totalPages) return;
+  loadingList = generation;
+  listState();
+  try {
+    await loadPage(page + 1, generation);
+  } finally {
+    if (loadingList === generation) loadingList = -1;
+    if (generation === listGeneration) listState();
+  }
+  // A page that does not fill the list leaves the end in view, which the observer does not report again.
+  if (generation === listGeneration && nearListEnd()) await loadMore();
+}
+
+async function search(): Promise<void> {
+  const query = new URLSearchParams();
   for (const key of ['account', 'device', 'room', 'from', 'to']) {
     const value = field('filters', key).value.trim();
     if (!value) continue;
     query.set(key, key === 'from' || key === 'to' ? String(dayBound(value, key === 'to')) : value);
   }
-  const result = await request(`/api/replay/sessions?${query}`);
-  totalPages = Math.max(1, result.totalPages);
-  const body = $('sessions');
-  body.replaceChildren();
-  for (const session of result.items) {
-    const row = document.createElement('tr');
-    cell(row, new Date(session.startedAt).toLocaleString());
-    cell(row, session.accountId || 'Guest', session.deviceId);
-    cell(row, session.platform, session.appVersion);
-    cell(row, session.rooms.join(', ') || 'No room');
-    cell(row, `${(session.compressedBytes / 1024).toFixed(1)} KB`, `${session.chunkCount} chunks`);
-    const button = document.createElement('button');
-    button.textContent = 'Watch';
-    button.disabled = session.chunkCount === 0;
-    button.addEventListener('click', () => run(() => watch(session.sessionId)));
-    const remove = document.createElement('button');
-    remove.textContent = 'Delete';
-    remove.className = 'danger';
-    remove.addEventListener('click', () => run(() => removeSession(session)));
-    row.insertCell().append(button, remove);
-    body.append(row);
-  }
-  if (!result.items.length) { const row = document.createElement('tr'); cell(row, 'No sessions match these filters'); body.append(row); }
-  $('page').textContent = `${page} / ${totalPages}`;
-  $<HTMLButtonElement>('previous').disabled = page <= 1;
-  $<HTMLButtonElement>('next').disabled = page >= totalPages;
+  filters = query;
+  resetList();
+  $('session-scroll').scrollTop = 0;
+  await loadMore();
 }
 
-async function removeSession(session: { sessionId: string; accountId: string; startedAt: number }): Promise<void> {
+async function removeSession(session: Session, item: HTMLElement): Promise<void> {
   const who = session.accountId || 'Guest';
   if (!confirm(`Delete the recording of ${who} from ${new Date(session.startedAt).toLocaleString()}? This cannot be undone.`)) return;
   await request(`/api/replay/sessions/${encodeURIComponent(session.sessionId)}`, undefined, 'DELETE');
   if (watching === session.sessionId) closePlayer();
-  await list();
+  item.remove();
+  listed.delete(session.sessionId);
+  totalItems = Math.max(0, totalItems - 1);
+  listState();
   status('Recording deleted');
+  // Later sessions moved up one place, so the last loaded page now ends with one not shown yet.
+  if (page) await loadPage(page, listGeneration);
+  listState();
 }
 
 // The server deletes 200 sessions per call and reports what is left.
@@ -142,14 +240,52 @@ async function eraseAccountRecordings(): Promise<void> {
     if (result.remainingSessions === 0) break;
   }
   closePlayer();
-  page = 1;
-  await list();
+  await search();
   status(`Deleted ${deleted} recording(s) of account ${account}`);
+}
+
+function duration(ms: number): string {
+  if (ms < 59_500) return `${Math.round(ms / 1000)} s`;
+  const minutes = Math.round(ms / 60_000);
+  return minutes < 60 ? `${minutes} min` : `${Math.floor(minutes / 60)} h ${minutes % 60} min`;
+}
+
+function notes(): void {
+  $('gaps').textContent = [
+    recordingGaps ? `${recordingGaps} recording gap(s). Playback resumes at the next complete screen snapshot` : '',
+    playbackErrors ? `${playbackErrors} screen change(s) could not be replayed and were skipped` : '',
+  ].filter(Boolean).join('. ');
+}
+
+function playbackError(error: unknown): void {
+  if (++playbackErrors <= 3) console.warn('Replay: skipped an event the player could not apply', error);
+  notes();
+}
+
+function showClock(timestamp: number): void {
+  const text = `Recorded at ${new Date(recordedAt(idle, timestamp)).toLocaleTimeString()}`;
+  if (text === clockText) return;
+  clockText = text;
+  $('clock').textContent = text;
+}
+
+// A wide screen's panel gives the player its space; stacked, it gets the window below the recording's
+// details. rrweb's controls take 80 px of it, the clock line most of the rest.
+function playerSize(): { width: number; height: number } {
+  const box = $('player');
+  const above = box.getBoundingClientRect().top - $('viewer').getBoundingClientRect().top;
+  const height = stacked() ? Math.min(720, window.innerHeight - above - 130) : box.clientHeight - 80;
+  return { width: Math.max(240, box.clientWidth), height: Math.max(240, height) };
+}
+
+function stacked(): boolean {
+  return window.matchMedia('(max-width: 900px)').matches;
 }
 
 async function watch(sessionId: string): Promise<void> {
   closePlayer();
   watching = sessionId;
+  markWatching();
   const generation = playbackGeneration;
   status('Loading recording...');
   const chunks: StoredChunk[] = [];
@@ -164,22 +300,43 @@ async function watch(sessionId: string): Promise<void> {
     }
     if (part >= data.totalPages) break;
   }
-  const { events, gaps } = recoverEvents(chunks);
+  const recovered = recoverEvents(chunks);
+  const shortened = shortenIdle(recovered.events);
+  idle = shortened.idle;
+  recordingGaps = recovered.gaps;
+  playbackErrors = 0;
+  clockText = '';
+  $('no-recording').hidden = true;
   $('recording').hidden = false;
   $('recording-title').textContent = `${session.accountId || 'Guest'} · ${session.deviceId}`;
   $('recording-info').textContent = `${session.platform} · ${session.appVersion} · ${new Date(session.startedAt).toLocaleString()} · Canvas content is not recorded`;
-  $('gaps').textContent = gaps ? `${gaps} recording gap(s). Playback resumes at the next complete screen snapshot` : '';
+  notes();
+  const quiet = idle.reduce((sum, period) => sum + period.to - period.from, 0);
+  $('idle').textContent = idle.length
+    ? `${duration(quiet)} with nothing recorded, such as time in the background, is shortened to ${IDLE_KEPT_MS / 1000} s per stretch. Marks on the timeline show where`
+    : '';
+  $('clock').textContent = '';
+  const marks = idle.map((period) => ({
+    type: 5, timestamp: Math.round((period.start + period.end) / 2),
+    data: { tag: `${period.background ? 'Recording paused' : 'Nothing recorded'} for ${duration(period.to - period.from)}`, payload: {} },
+  }));
   player = new rrwebPlayer({
     target: $('player'),
     props: {
-      events: events as any,
-      width: Math.max(240, $('player').clientWidth),
-      height: Math.max(300, Math.min(720, window.innerHeight - 180)),
-      autoPlay: true, skipInactive: false, showWarning: false, showDebug: false,
+      events: [...shortened.events, ...marks] as any,
+      ...playerSize(),
+      autoPlay: false, skipInactive: false, showWarning: false, showDebug: false,
       UNSAFE_replayCanvas: false,
+      tags: Object.fromEntries(marks.map((mark) => [mark.data.tag, '#ffc38a'])),
     },
   });
-  $('recording').scrollIntoView({ block: 'start' });
+  keepPlaying(player.getReplayer(), (error) => { if (generation === playbackGeneration) playbackError(error); });
+  const start = shortened.events[0].timestamp;
+  player.addEventListener('ui-update-current-time', (value) => {
+    if (generation === playbackGeneration) showClock(start + (value as { payload: number }).payload);
+  });
+  player.play();
+  if (stacked()) $('viewer').scrollIntoView({ block: 'start' });
   status('Recording loaded');
 }
 
@@ -188,7 +345,7 @@ async function open(): Promise<void> {
   $('login').hidden = true;
   $('dashboard').hidden = false;
   $('logout').hidden = false;
-  await list();
+  await search();
   status('');
 }
 
@@ -228,11 +385,23 @@ form('settings').addEventListener('submit', (event) => {
     toast('Settings saved');
   });
 });
-form('filters').addEventListener('submit', (event) => { event.preventDefault(); page = 1; run(list); });
+form('filters').addEventListener('submit', (event) => { event.preventDefault(); run(search); });
 $('erase-account').addEventListener('click', () => run(eraseAccountRecordings));
-$('previous').addEventListener('click', () => { page = Math.max(1, page - 1); run(list); });
-$('next').addEventListener('click', () => { page = Math.min(totalPages, page + 1); run(list); });
+$('load-more').addEventListener('click', () => run(loadMore));
+new IntersectionObserver((entries) => {
+  if (entries.some((entry) => entry.isIntersecting)) run(loadMore);
+}, { root: $('session-scroll'), rootMargin: '0px 0px 300px 0px' }).observe($('sessions-end'));
 $('close-recording').addEventListener('click', closePlayer);
 $('logout').addEventListener('click', () => { signOut(); status('Signed out'); });
+// The space changes with the window, the settings panel and notes that appear during playback.
+let resizeTimer = 0;
+new ResizeObserver(() => {
+  clearTimeout(resizeTimer);
+  resizeTimer = window.setTimeout(() => {
+    if (!player) return;
+    player.$set(playerSize());
+    player.triggerResize();
+  }, 100);
+}).observe($('player'));
 window.addEventListener('pagehide', closePlayer);
 if (token) void open().catch(() => { signOut(); status('Sign in again to view recordings'); });

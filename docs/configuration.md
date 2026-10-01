@@ -75,8 +75,14 @@ Filter sessions by account, device, a date range in the viewer's local time, or 
 
 The room filter matches a complete room code without regard to letter case
 
+Sessions are listed on the left, newest first, and the list loads 30 more as it is scrolled. The chosen recording plays on the right
+
 Playback includes rrweb's timeline, speed and pause controls
 
 Missing or unreadable chunks are marked as gaps, and playback waits for a complete DOM snapshot after each gap
 
 A chunk whose sequence number has already been played is skipped
+
+A session continues while its app is in the background, so it can hold hours with nothing recorded. Each stretch over 10 seconds with nothing recorded plays as 1 second, a mark on the timeline shows where, and the time on the device clock is shown under the player
+
+An event the player cannot apply is skipped and counted under the recording's details, instead of stopping playback
