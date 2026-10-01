@@ -138,7 +138,9 @@ public class MainActivity extends BridgeActivity {
   installed = true;
   adbCommand(['shell', 'pm', 'clear', appId]);
   const startedAt = Date.now();
-  await run(maestro, ['--device', device, 'test', '--format', 'JUNIT', '--output', join(work, 'report.xml'), '--debug-output', join(work, 'maestro'), '--test-output-dir', join(work, 'artifacts'), join(root, 'scripts/e2e/observability-android.yaml')]);
+  // A freshly booted emulator can take longer than Maestro's default to start its driver.
+  await run(maestro, ['--device', device, 'test', '--format', 'JUNIT', '--output', join(work, 'report.xml'), '--debug-output', join(work, 'maestro'), '--test-output-dir', join(work, 'artifacts'), join(root, 'scripts/e2e/observability-android.yaml')],
+    { env: { ...process.env, MAESTRO_DRIVER_STARTUP_TIMEOUT: process.env.MAESTRO_DRIVER_STARTUP_TIMEOUT || '180000' } });
   const query = new URLSearchParams({ service: 'android-native-verification', deviceId: 'android-observability-fixture', from: String(startedAt) });
   const issues = await request('/api/replay/issues?' + query, undefined, auth.token);
   const occurrences = [];

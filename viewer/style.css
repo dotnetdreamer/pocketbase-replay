@@ -141,8 +141,10 @@ button.secondary { background: transparent; } button.secondary:hover { backgroun
 .webhook-test { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; font-size: 13px; color: #aebdd1; }
 .webhook-test button { font-size: 13px; padding: 6px 10px; }
 /* Log volume. Colours checked for colour-blind separation on the #18212f card: errors sit on the baseline. */
-.log-volume { position: relative; margin: 0 0 16px; padding-bottom: 14px; border-bottom: 1px solid #2e3c50;
+.log-volume { position: relative; margin: 0 0 16px; padding-bottom: 14px; border-bottom: 1px solid #2e3c50; transition: opacity .2s;
   --volume-errors: #d55181; --volume-warnings: #c98500; --volume-info: #3987e5; --volume-debug: #199e70; }
+.log-volume.refreshing { opacity: .5; }
+.log-volume.refreshing .volume-chart { pointer-events: none; }
 .volume-heading { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 4px 10px; }
 .volume-heading h3 { font-size: 13px; margin: 0; }
 .volume-heading p { font-size: 12px; margin: 0; color: #8fa3bf; }

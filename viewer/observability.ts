@@ -41,16 +41,18 @@ export class LogVolumeRequest {
     this.failed = false;
   }
 
+  // The previous counts stay while the new ones load, so the chart dims instead of vanishing on every search.
+  // A failure removes them: a chart must never show counts for a filter it could not load.
   async load(query: URLSearchParams, request: (query: URLSearchParams) => Promise<LogVolume>, changed: () => void): Promise<void> {
-    this.reset();
-    const generation = this.generation;
+    const generation = ++this.generation;
     this.loading = true;
+    this.failed = false;
     changed();
     try {
       const result = await request(new URLSearchParams(query));
       if (generation === this.generation) this.value = result;
     } catch {
-      if (generation === this.generation) this.failed = true;
+      if (generation === this.generation) { this.value = undefined; this.failed = true; }
     } finally {
       if (generation === this.generation) {
         this.loading = false;

@@ -5,15 +5,17 @@ tags:
   - android
   - local
 ---
+# The waits are ceilings, and a passing run never reaches them. A cold emulator took 23 seconds
+# to open this app and about 40 to show its first result.
 - launchApp:
     stopApp: false
 - extendedWaitUntil:
     visible: ".*STARTUP PASS.*"
-    timeout: 30000
+    timeout: 150000
 - tapOn: "Capture JS stack"
 - extendedWaitUntil:
     visible: ".*STACK PASS.*"
-    timeout: 20000
+    timeout: 90000
 - tapOn: "Capture DOMException"
 - assertVisible: ".*DOMEXCEPTION PASS.*"
 - tapOn: "Capture grouped errors"
@@ -27,7 +29,7 @@ tags:
     stopApp: false
 - extendedWaitUntil:
     visible: ".*BACKGROUND PASS.*"
-    timeout: 20000
+    timeout: 90000
 - assertVisible: ".*STARTUP PASS.*"
 - assertVisible: ".*STACK PASS.*"
 - takeScreenshot: observability-android

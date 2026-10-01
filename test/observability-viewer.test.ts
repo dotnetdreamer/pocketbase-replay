@@ -104,7 +104,8 @@ test('a failed volume search clears previous counts and an older failure cannot 
   assert.equal(shown, exampleVolume);
   const old = pendingVolume();
   const oldSearch = volume.load(new URLSearchParams('service=old'), () => old.promise, render);
-  assert.equal(shown, undefined);
+  // Kept, dimmed, while the next search loads.
+  assert.equal(shown, exampleVolume);
   assert.equal(volume.loading, true);
   const failed = volume.load(new URLSearchParams('service=failed'), async () => { throw Error('Unavailable'); }, render);
   await failed;

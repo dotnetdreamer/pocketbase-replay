@@ -541,3 +541,41 @@ test('log volume counts each level per time bucket for the same filters as the l
   assert.equal(observability.volume(f.event({}, { level: 'fatal' })).buckets.length, 0);
   f.close();
 });
+
+test('config and upload requests read settings from memory; a save applies at once and a direct edit within five seconds', () => {
+  const f = fixture();
+  const realNow = Date.now;
+  let offset = 0;
+  try {
+    f.enable();
+    const records = f.app.findRecordsByFilter;
+    let reads = 0;
+    f.app.findRecordsByFilter = (name, filter, ...rest) => {
+      if (name === 'replay_settings' && rest[3] && rest[3].key === 'observability') reads++;
+      return records(name, filter, ...rest);
+    };
+    const token = f.token();
+    for (let i = 0; i < 5; i++) {
+      observability.publicConfig(f.event({ ...f.metadata, token }));
+      observability.logsUpload(f.event({ token, events: [{ id: 'memory-' + i, timestamp: now, message: 'Read from memory' }] }));
+    }
+    assert.equal(reads, 0);
+    // An edit made outside the dashboard waits for the copy to expire.
+    const row = f.records('replay_settings', "key = 'observability'")[0];
+    row.set('value', JSON.stringify({ ...JSON.parse(row.getString('value')), logs_enabled: false }));
+    f.app.save(row);
+    assert.equal(observability.publicConfig(f.event({ ...f.metadata, token })).logsEnabled, true);
+    Date.now = () => realNow() + (offset = 5001);
+    assert.equal(observability.publicConfig(f.event({ ...f.metadata, token })).logsEnabled, false);
+    assert.throws(() => observability.logsUpload(f.event({ token, events: [{ id: 'after-edit', timestamp: now, message: 'Refused' }] })), { status: 403 });
+    assert.equal(reads, 1);
+    // A dashboard save is seen by the very next request, which reads nothing itself.
+    f.enable({ logs_enabled: true });
+    reads = 0;
+    assert.equal(observability.logsUpload(f.event({ token, events: [{ id: 'after-save', timestamp: now, message: 'Accepted' }] })).accepted, 1);
+    assert.equal(reads, 0);
+  } finally {
+    Date.now = realNow;
+    f.close();
+  }
+});

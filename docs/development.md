@@ -51,6 +51,11 @@ that device and builds a separate Capacitor test app
 REPLAY_PB_BIN=/path/to/pocketbase npm run test:android
 ```
 
+A freshly booted emulator can be slow: the flow allows the app up to two and a
+half minutes to show its first result, and gives Maestro's driver three
+minutes to start. Set `MAESTRO_DRIVER_STARTUP_TIMEOUT` in milliseconds to
+change the driver's limit
+
 The Maestro flow checks real JavaScript stacks, DOMException fields, startup
 buffering, explicit grouping, replay-only starts and native background and
 resume. The runner then verifies the stored errors and logs in PocketBase.

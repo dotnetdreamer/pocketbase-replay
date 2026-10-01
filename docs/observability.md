@@ -183,8 +183,10 @@ The daily limit conservatively counts received error and log data, issue
 summaries and new alerts over the last 24 hours. Its counter commits with
 the uploaded entries, and a refused batch rolls it back. SQL totals refresh
 once per minute
-Replay has its own storage budget. Settings changes apply at ingestion, so a
-disabled feature immediately refuses new uploads. Clients refresh their
+Replay has its own storage budget. Settings saved from the dashboard apply to
+the next request, so a disabled feature immediately refuses new uploads. Upload
+and config requests read the settings from memory, so a change made directly
+to the `replay_settings` row takes up to five seconds. Clients refresh their
 configuration every 45 seconds
 
 Session limits count newly issued credentials. Renewing the same credential

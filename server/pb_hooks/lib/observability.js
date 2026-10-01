@@ -107,6 +107,18 @@ function addDailyBytes(tx, cached, bytes) {
   tx.save(cached.row);
 }
 
+// Config and upload requests read the settings from memory, so a flood the rate limit refuses costs no
+// database read. A save replaces the copy at once; a direct edit of the row is picked up within five seconds.
+function cachedConfig(app) {
+  const store = app.store();
+  const now = Date.now();
+  const cached = load(store, 'observability:settings');
+  if (cached.at > now - 5000 && cached.at <= now && cached.value) return cached.value;
+  const value = config(app);
+  store.set('observability:settings', JSON.stringify({ at: now, value: value }));
+  return value;
+}
+
 function getSettings(e) { admin(e); return config(e.app); }
 
 function saveSettings(e) {
@@ -124,11 +136,12 @@ function saveSettings(e) {
     row.set('value', JSON.stringify(saved));
     tx.save(row);
   });
+  e.app.store().set('observability:settings', JSON.stringify({ at: Date.now(), value: saved }));
   return saved;
 }
 
 function publicConfig(e) {
-  const cfg = config(e.app);
+  const cfg = cachedConfig(e.app);
   rate(e, 'config', cfg.config_requests_per_ip_minute);
   const body = readBody(e);
   const meta = base.metadata(body);
@@ -146,10 +159,9 @@ function publicConfig(e) {
   let token = current;
   let context;
   e.app.runInTransaction(function (tx) {
-    const latest = config(tx);
-    if ((!latest.errors_enabled && !latest.logs_enabled) || replay.isForgotten(tx, meta.accountId)) return;
-    result.errorsEnabled = latest.errors_enabled;
-    result.logsEnabled = latest.logs_enabled;
+    if (replay.isForgotten(tx, meta.accountId)) return;
+    result.errorsEnabled = cfg.errors_enabled;
+    result.logsEnabled = cfg.logs_enabled;
     let changed = false;
     if (current) {
       const rows = tx.findRecordsByFilter('replay_observability_sessions', 'tokenHash = {:hash} && expiresAt > {:now}', '', 1, 0, { hash: $security.sha256(current), now: now });
@@ -163,9 +175,9 @@ function publicConfig(e) {
       }
     } else {
       const params = { since: now - 3600000, device: meta.deviceId, ip: $security.sha256(e.realIP()) };
-      if (count(tx, 'replay_observability_sessions', 'deviceId = {:device} AND issuedAt > {:since}', params) >= latest.sessions_per_device_hour ||
-          count(tx, 'replay_observability_sessions', 'ipHash = {:ip} AND issuedAt > {:since}', params) >= latest.sessions_per_ip_hour ||
-          count(tx, 'replay_observability_sessions', 'issuedAt > {:since}', params) >= latest.sessions_per_hour) base.fail(429, 'Too many observability sessions');
+      if (count(tx, 'replay_observability_sessions', 'deviceId = {:device} AND issuedAt > {:since}', params) >= cfg.sessions_per_device_hour ||
+          count(tx, 'replay_observability_sessions', 'ipHash = {:ip} AND issuedAt > {:since}', params) >= cfg.sessions_per_ip_hour ||
+          count(tx, 'replay_observability_sessions', 'issuedAt > {:since}', params) >= cfg.sessions_per_hour) base.fail(429, 'Too many observability sessions');
       token = $security.randomString(64);
       context = new Record(tx.findCollectionByNameOrId('replay_observability_sessions'));
       context.set('tokenHash', $security.sha256(token));
@@ -209,11 +221,11 @@ function addAlert(tx, issue, kind, now, cfg) {
 }
 
 function ingestion(e, kind) {
-  const settings = config(e.app);
-  rate(e, kind, settings.upload_requests_per_ip_minute);
+  const cfg = cachedConfig(e.app);
+  rate(e, kind, cfg.upload_requests_per_ip_minute);
   const now = Date.now();
   const value = core.batch(readBody(e), kind, now);
-  const spend = ipBudget(e, core.bytes(JSON.stringify(value.events)), settings.upload_mb_per_ip_hour * 1024 * 1024);
+  const spend = ipBudget(e, core.bytes(JSON.stringify(value.events)), cfg.upload_mb_per_ip_hour * 1024 * 1024);
   let accepted = 0;
   let duplicates = 0;
   let conflicts = 0;
@@ -224,7 +236,6 @@ function ingestion(e, kind) {
     let context;
     try { context = tx.findFirstRecordByData('replay_observability_sessions', 'tokenHash', $security.sha256(value.token)); } catch (_) { base.fail(401, 'Invalid observability token'); }
     if (context.getFloat('expiresAt') <= now) base.fail(410, 'Observability session expired');
-    const cfg = config(tx);
     if (!(kind === 'error' ? cfg.errors_enabled : cfg.logs_enabled) || replay.isForgotten(tx, context.getString('accountId'))) base.fail(403, 'Observability is disabled');
     const accountId = context.getString('accountId');
     const deviceId = context.getString('deviceId');

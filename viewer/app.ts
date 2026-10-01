@@ -730,13 +730,21 @@ function emptyVolume(): void {
 }
 
 function renderVolumeState(): void {
-  volume = volumeRequest.value;
-  volumeData = volume ? volumeColumns(volume) : [];
-  volumeFocus = -1;
+  // Redrawn only when the counts change; a search still loading dims the chart already shown.
+  if (volume !== volumeRequest.value) {
+    volume = volumeRequest.value;
+    volumeData = volume ? volumeColumns(volume) : [];
+    volumeFocus = -1;
+    renderVolume();
+  }
+  const refreshing = volumeRequest.loading && !!volume;
+  if (refreshing) hideVolumeTip();
+  $('log-volume').classList.toggle('refreshing', refreshing);
+  $('log-volume').setAttribute('aria-busy', String(volumeRequest.loading));
+  // Text only where no chart is drawn, so a refresh never pushes the chart down a line.
   $('log-volume-state').textContent = volumeRequest.failed ? 'Could not load log volume. Use Find logs to retry'
-    : volumeRequest.loading ? 'Loading log volume...' : '';
+    : volumeRequest.loading && !volume ? 'Loading log volume...' : '';
   $('log-volume-state').classList.toggle('error', volumeRequest.failed);
-  renderVolume();
 }
 
 function loadVolume(query: URLSearchParams): Promise<void> {
@@ -825,7 +833,8 @@ function renderVolume(): void {
 function showVolumeTip(index: number): void {
   const column = volumeData[index];
   const chart = $('log-volume-chart'), tip = $('log-volume-tip');
-  if (!column || !volume) return;
+  // Dimmed counts belong to the previous search, so they are not read out.
+  if (!column || !volume || volumeRequest.loading) return;
   volumeFocus = index;
   const slot = (chart.clientWidth - VOLUME_BOX.left - VOLUME_BOX.right) / volumeData.length;
   const hover = chart.querySelector<SVGRectElement>('.volume-hover');
