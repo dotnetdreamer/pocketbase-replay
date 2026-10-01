@@ -7,8 +7,11 @@ const STATIC_ASSET = /^\/(?:assets|fonts|icons)\/(?:[A-Za-z0-9._-]+\/)*[A-Za-z0-
 
 const PACKAGED_ORIGINS = ['https://localhost', 'capacitor://localhost', 'capacitor-electron://-'];
 const ASSET_VERSION = /^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/;
+const DATA_IMAGE = /^data:image\/(?:avif|gif|jpeg|png|svg\+xml|webp)[;,]/i;
+// A full snapshot is one event capped at 1 MB, so one large picture must not stop the recording.
+const DATA_IMAGE_CHARS = 128 * 1024;
 
-export interface ReplayAssetOptions { assetBaseUrl?: string; assetOrigin?: string }
+export interface ReplayAssetOptions { assetBaseUrl?: string; assetOrigin?: string; images?: boolean }
 
 let originSeen: string | undefined;
 let originPackaged = false;
@@ -34,6 +37,8 @@ export function packagedAssetBase(endpoint: string, assetOrigin: string | undefi
 export function cleanUrl(value: string, assets: ReplayAssetOptions = {}): string {
   value = value.trim();
   if (/^#[A-Za-z0-9_:.-]+$/.test(value)) return value;
+  // Only when the replay server's record_images setting is on.
+  if (assets.images && DATA_IMAGE.test(value) && value.length <= DATA_IMAGE_CHARS) return value;
   if (/^(?:data:|blob:|javascript:)/i.test(value)) return '';
   const noQuery = value.split(/[?#]/, 1)[0];
   const cleaned = noQuery.replace(/(https?:\/\/)[^/@]+@/gi, '$1').replace(/[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,}/g, '[masked]');

@@ -15,10 +15,11 @@ The dashboard edits rows in `replay_settings`
 | `daily_limit_mb` | 1 to 1048576 MB of gzip data a day | `1024` |
 | `mask_selector` | CSS selector list whose text is recorded as `*` | `''` |
 | `block_selector` | CSS selector list whose elements are replaced by empty boxes | `''` |
+| `record_images` | `true` records images the app builds as `data:` URLs | `false` |
 
 Rows store values as JSON text, so a selector row holds a JSON string such as `".chat-message, [class*=\"name\"]"`
 
-The migration does not seed the `daily_limit_mb`, `mask_selector` or `block_selector` rows, so the server uses the initial values above until those settings are saved
+The migration does not seed the `daily_limit_mb`, `mask_selector`, `block_selector` or `record_images` rows, so the server uses the initial values above until those settings are saved
 
 Open clients check settings every 45 seconds
 
@@ -48,6 +49,18 @@ Edit `mask_selector` and `block_selector` under **Recording settings** in the da
 When `/config` and `/start` answer `enabled: true`, they send these settings to the app as `maskTextSelector` and `blockSelector`
 
 The app combines them with its built-in rules for inputs, `[contenteditable]`, `[data-replay-mask]`, canvas, media, iframes and `[data-replay-block]`, plus any `maskTextSelector` or `blockSelector` passed to `startReplay`
+
+### Images built by the app
+
+The app strips every `data:` URL from a recording by default, so pictures an app draws for itself, such as generated avatars or a photo held in memory, play back empty
+
+Tick **Record images the app builds itself** under **Recording settings** to keep `data:` URLs for AVIF, GIF, JPEG, PNG, SVG and WebP images, in `src` attributes and CSS `url()` values
+
+An image over 128 KB of URL text is still stripped, because a full snapshot is one event and an event over 1 MB stops the recording
+
+`blob:` URLs are never recorded, because they point into the recording device's memory
+
+Images loaded from ordinary `https` URLs are recorded with or without this setting, without their query string
 
 ### Apply rule changes
 

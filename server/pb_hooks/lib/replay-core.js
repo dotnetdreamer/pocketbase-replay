@@ -12,7 +12,7 @@ const LIMITS = {
   clockSkewMs: 24 * 60 * 60 * 1000,
   selectorChars: 20000,
 };
-const DEFAULTS = { mode: 'off', percentage: 0, account_ids: [], retention_days: 14, daily_limit_mb: 1024, mask_selector: '', block_selector: '' };
+const DEFAULTS = { mode: 'off', percentage: 0, account_ids: [], retention_days: 14, daily_limit_mb: 1024, mask_selector: '', block_selector: '', record_images: false };
 
 function fail(status, message) {
   const error = new Error(message);
@@ -44,6 +44,13 @@ function selector(value, name) {
   return value;
 }
 
+// Missing means off: a server or dashboard that predates the setting never records images.
+function flag(value, name) {
+  if (value === undefined || value === null) return false;
+  if (typeof value !== 'boolean') fail(400, 'Invalid ' + name);
+  return value;
+}
+
 function metadata(value) {
   const body = object(value);
   const room = text(body.room, 'room', 128, false);
@@ -72,6 +79,7 @@ function settings(value) {
     daily_limit_mb: integer(value.daily_limit_mb, 'daily_limit_mb', 1, 1048576),
     mask_selector: selector(value.mask_selector, 'mask_selector'),
     block_selector: selector(value.block_selector, 'block_selector'),
+    record_images: flag(value.record_images, 'record_images'),
   };
 }
 
@@ -128,4 +136,4 @@ function gaps(items, previous) {
   return missing;
 }
 
-module.exports = { LIMITS: LIMITS, DEFAULTS: DEFAULTS, fail: fail, object: object, text: text, integer: integer, selector: selector, metadata: metadata, settings: settings, enabled: enabled, chunk: chunk, page: page, authURL: authURL, gaps: gaps };
+module.exports = { LIMITS: LIMITS, DEFAULTS: DEFAULTS, fail: fail, object: object, text: text, integer: integer, selector: selector, flag: flag, metadata: metadata, settings: settings, enabled: enabled, chunk: chunk, page: page, authURL: authURL, gaps: gaps };

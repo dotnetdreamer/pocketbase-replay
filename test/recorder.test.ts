@@ -702,6 +702,22 @@ test('changed server rules restart capture with a fresh snapshot in the same ses
   h.controller.stop();
 });
 
+test('data: images upload only while the server turns recordImages on, and a change restarts capture', async () => {
+  const avatar = 'data:image/svg+xml;base64,PHN2Zy8+';
+  const picture = () => ({ type: 3, timestamp: 0, data: { source: 0, texts: [], removes: [], adds: [], attributes: [{ id: 2, attributes: { src: avatar } }] } }) as ReplayEvent;
+  const sources = (chunk: ReplayChunk) => events(chunk).flatMap((event) => (event.data.attributes as { attributes: { src?: string } }[] | undefined ?? []).map((item) => item.attributes.src));
+  const h = harness({ rules: { maskTextSelector: '', blockSelector: '' } });
+  await settle();
+  h.raw(picture());
+  h.rules({ maskTextSelector: '', blockSelector: '', recordImages: true });
+  await h.advance(REPLAY_LIMITS.configIntervalMs);
+  assert.equal(h.counts().starts, 2);
+  h.raw(picture());
+  await h.controller.flush();
+  assert.deepEqual(h.accepted.flatMap(sources), ['', avatar]);
+  h.controller.stop();
+});
+
 test('an unreadable or invalid server rule fails closed until a later poll fixes it', async () => {
   const validSelector = (selector: string) => !selector.includes('!');
   const h = harness({ enabled: false, validSelector });

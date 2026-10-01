@@ -87,6 +87,7 @@ export function createReplay(options: ReplayOptions, runtime: ReplayRuntime): Re
   let removeLifecycle: (() => void) | undefined;
   let serverMask: string | null = '';
   let serverBlock: string | null = '';
+  let serverImages = false;
   let captureRules = '';
 
   function metadata(): ReplayMetadata | null {
@@ -107,9 +108,10 @@ export function createReplay(options: ReplayOptions, runtime: ReplayRuntime): Re
   function rememberRules(answer: Record<string, unknown>): void {
     serverMask = serverSelector(answer.maskTextSelector);
     serverBlock = serverSelector(answer.blockSelector);
+    serverImages = answer.recordImages === true;
   }
 
-  function rulesKey(): string { return JSON.stringify([serverMask, serverBlock]); }
+  function rulesKey(): string { return JSON.stringify([serverMask, serverBlock, serverImages]); }
 
   // rrweb skips a selector it cannot parse, which would leave that text unmasked.
   function captureOptions(): ReplayOptions | null {
@@ -194,6 +196,7 @@ export function createReplay(options: ReplayOptions, runtime: ReplayRuntime): Re
         assetBaseUrl: options.assetBaseUrl !== undefined ? options.assetBaseUrl
           : packagedAssetBase(endpoint, assetOrigin, value.appVersion),
         assetOrigin,
+        images: serverImages,
       });
       const bytes = byteLength(json) + 1;
       if (bytes > REPLAY_LIMITS.eventBytes) { metrics.droppedEvents++; blockOversize(); return; }

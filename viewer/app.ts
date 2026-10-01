@@ -94,6 +94,9 @@ function signOut(): void {
   resetList();
   $('dashboard').hidden = true;
   $('logout').hidden = true;
+  $('open-settings').hidden = true;
+  $<HTMLDialogElement>('settings-dialog').close();
+  $<HTMLDialogElement>('erase-dialog').close();
   $('login').hidden = false;
 }
 
@@ -104,6 +107,14 @@ async function loadSettings(): Promise<void> {
   field('settings', 'account_ids').value = settings.account_ids.join('\n');
   // An older server has no selector settings.
   for (const key of ['mask_selector', 'block_selector']) field('settings', key).value = typeof settings[key] === 'string' ? settings[key] : '';
+  field('settings', 'record_images').checked = settings.record_images === true;
+  showModeFields();
+}
+
+// Only the field for the chosen mode is shown; the other keeps its value.
+function showModeFields(): void {
+  const mode = field('settings', 'mode').value;
+  form('settings').querySelectorAll<HTMLElement>('[data-mode]').forEach((label) => { label.hidden = label.dataset.mode !== mode; });
 }
 
 function selectors(name: string, label: string): string {
@@ -229,10 +240,24 @@ async function removeSession(session: Session, item: HTMLElement): Promise<void>
 }
 
 // The server deletes 200 sessions per call and reports what is left.
+// Deleting every recording cannot be undone, so the account ID has to be typed again.
+function confirmErase(account: string): Promise<boolean> {
+  const dialog = $<HTMLDialogElement>('erase-dialog');
+  const input = field('erase-confirm', 'confirm_account');
+  $('erase-text').textContent = `Every recording of account ${account} will be deleted. This cannot be undone.`;
+  input.value = '';
+  input.oninput = () => { $<HTMLButtonElement>('erase-go').disabled = input.value.trim() !== account; };
+  $<HTMLButtonElement>('erase-go').disabled = true;
+  dialog.returnValue = '';
+  dialog.showModal();
+  input.focus();
+  return new Promise((resolve) => dialog.addEventListener('close', () => resolve(dialog.returnValue === 'delete'), { once: true }));
+}
+
 async function eraseAccountRecordings(): Promise<void> {
   const account = field('filters', 'account').value.trim();
   if (!account) { status('Enter an account ID in the Account filter first', true); return; }
-  if (!confirm(`Delete every recording of account ${account}? This cannot be undone.`)) return;
+  if (!await confirmErase(account)) return;
   let deleted = 0;
   for (let batch = 0; batch < 100; batch++) {
     const result = await request(`/api/replay/accounts/${encodeURIComponent(account)}`, undefined, 'DELETE');
@@ -345,6 +370,7 @@ async function open(): Promise<void> {
   $('login').hidden = true;
   $('dashboard').hidden = false;
   $('logout').hidden = false;
+  $('open-settings').hidden = false;
   await search();
   status('');
 }
@@ -365,9 +391,19 @@ form('login').addEventListener('submit', (event) => {
     await open();
   });
 });
+$('open-settings').addEventListener('click', () => run(async () => {
+  await loadSettings();
+  $('settings-error').textContent = '';
+  $<HTMLDialogElement>('settings-dialog').showModal();
+}));
+$('close-settings').addEventListener('click', () => $<HTMLDialogElement>('settings-dialog').close());
+field('settings', 'mode').addEventListener('change', showModeFields);
+$('erase-cancel').addEventListener('click', () => $<HTMLDialogElement>('erase-dialog').close());
 form('settings').addEventListener('submit', (event) => {
   event.preventDefault();
-  run(async () => {
+  $('settings-error').textContent = '';
+  // The page status sits behind the modal, so errors are shown in the dialog.
+  void (async () => {
     // Built first, so a bad selector is reported before anything is asked.
     const settings = {
       mode: field('settings', 'mode').value,
@@ -377,13 +413,14 @@ form('settings').addEventListener('submit', (event) => {
       daily_limit_mb: Number(field('settings', 'daily_limit_mb').value),
       mask_selector: selectors('mask_selector', 'Mask text in'),
       block_selector: selectors('block_selector', 'Block elements'),
+      record_images: field('settings', 'record_images').checked,
     };
     if (!confirm('Save these recording settings? Open apps pick them up within a minute.')) return;
     await request('/api/replay/settings', settings);
     await loadSettings();
-    status('');
+    $<HTMLDialogElement>('settings-dialog').close();
     toast('Settings saved');
-  });
+  })().catch((error: unknown) => { $('settings-error').textContent = error instanceof Error ? error.message : 'Request failed'; });
 });
 form('filters').addEventListener('submit', (event) => { event.preventDefault(); run(search); });
 $('erase-account').addEventListener('click', () => run(eraseAccountRecordings));
@@ -393,7 +430,7 @@ new IntersectionObserver((entries) => {
 }, { root: $('session-scroll'), rootMargin: '0px 0px 300px 0px' }).observe($('sessions-end'));
 $('close-recording').addEventListener('click', closePlayer);
 $('logout').addEventListener('click', () => { signOut(); status('Signed out'); });
-// The space changes with the window, the settings panel and notes that appear during playback.
+// The space changes with the window and with notes that appear during playback.
 let resizeTimer = 0;
 new ResizeObserver(() => {
   clearTimeout(resizeTimer);

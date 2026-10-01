@@ -11,7 +11,7 @@ function readBody(e) {
 }
 
 function config(app) {
-  const rows = app.findRecordsByFilter('replay_settings', "key = 'mode' || key = 'percentage' || key = 'account_ids' || key = 'retention_days' || key = 'daily_limit_mb' || key = 'mask_selector' || key = 'block_selector'", '', 7, 0);
+  const rows = app.findRecordsByFilter('replay_settings', "key = 'mode' || key = 'percentage' || key = 'account_ids' || key = 'retention_days' || key = 'daily_limit_mb' || key = 'mask_selector' || key = 'block_selector' || key = 'record_images'", '', 8, 0);
   const result = {};
   let valid = true;
   for (const key of Object.keys(core.DEFAULTS)) result[key] = core.DEFAULTS[key];
@@ -31,6 +31,7 @@ function config(app) {
     for (const key of ['mask_selector', 'block_selector']) {
       try { fallback[key] = core.selector(result[key], key); } catch (_) { /* An unreadable rule stays empty. */ }
     }
+    fallback.record_images = result.record_images === true;
     return fallback;
   }
 }
@@ -199,7 +200,7 @@ function publicConfig(e) {
   if (!selected(cfg, meta)) return { enabled: false, uploadIntervalMs: core.LIMITS.uploadIntervalMs };
   meta.accountId = account(e.app, meta);
   if (!selected(cfg, meta) || isForgotten(e.app, meta.accountId)) return { enabled: false, uploadIntervalMs: core.LIMITS.uploadIntervalMs };
-  return { enabled: true, uploadIntervalMs: core.LIMITS.uploadIntervalMs, maskTextSelector: cfg.mask_selector, blockSelector: cfg.block_selector };
+  return { enabled: true, uploadIntervalMs: core.LIMITS.uploadIntervalMs, maskTextSelector: cfg.mask_selector, blockSelector: cfg.block_selector, recordImages: cfg.record_images };
 }
 
 function start(e) {
@@ -233,7 +234,7 @@ function start(e) {
   });
   return {
     enabled: true, sessionId: session.id, token: token, expiresAt: now + core.LIMITS.sessionMs, expiresIn: core.LIMITS.sessionMs, uploadIntervalMs: core.LIMITS.uploadIntervalMs,
-    maskTextSelector: cfg.mask_selector, blockSelector: cfg.block_selector,
+    maskTextSelector: cfg.mask_selector, blockSelector: cfg.block_selector, recordImages: cfg.record_images,
   };
 }
 
@@ -300,7 +301,7 @@ function saveSettings(e) {
   const body = readBody(e);
   // An older dashboard leaves these out; they keep their stored values.
   let stored = null;
-  for (const key of ['daily_limit_mb', 'mask_selector', 'block_selector']) {
+  for (const key of ['daily_limit_mb', 'mask_selector', 'block_selector', 'record_images']) {
     if (body[key] !== undefined) continue;
     stored = stored || config(e.app);
     body[key] = stored[key];

@@ -10,7 +10,7 @@
   <script type="module" src="replay/app.js"></script>
 </head>
 <body>
-  <header><div><h1>Session replays</h1><p>Watch screens, taps and dialogs</p></div><button id="logout" hidden>Sign out</button></header>
+  <header><div><h1>Session replays</h1><p>Watch screens, taps and dialogs</p></div><div class="header-actions"><button id="logout" hidden>Sign out</button><button id="open-settings" hidden>Recording settings</button></div></header>
   <p id="status" role="status" aria-live="polite"></p>
   <form id="login" class="card login">
     <h2>Sign in to PocketBase</h2>
@@ -19,19 +19,43 @@
     <button type="submit">Sign in</button>
   </form>
   <main id="dashboard" hidden>
-    <details class="card"><summary>Recording settings</summary>
+    <dialog id="settings-dialog" class="card" aria-labelledby="settings-title">
+      <h2 id="settings-title">Recording settings</h2>
       <form id="settings">
-        <label>Who to record<select name="mode"><option value="off">Off</option><option value="percentage">Percentage of devices</option><option value="accounts">Selected accounts</option></select></label>
-        <label>Percentage<input name="percentage" type="number" min="0" max="100" step="0.1"></label>
-        <label>Account IDs<textarea name="account_ids" rows="3" placeholder="One account ID per line"></textarea></label>
-        <label>Keep recordings for (days)<input name="retention_days" type="number" min="1" max="365" required></label>
-        <label>Daily upload limit (MB)<input name="daily_limit_mb" type="number" min="1" max="1048576" step="1" required></label>
-        <label class="selectors">Mask text in (CSS selectors)<textarea name="mask_selector" rows="4" maxlength="20000" spellcheck="false" autocomplete="off" placeholder=".chat-message, [class*=&quot;name&quot;]"></textarea></label>
-        <label class="selectors">Block elements (CSS selectors)<textarea name="block_selector" rows="4" maxlength="20000" spellcheck="false" autocomplete="off" placeholder=".avatar, .private-photo"></textarea></label>
-        <button type="submit">Save settings</button>
-        <p>Changes reach open apps within a minute. Turning recording off stops new uploads. New selectors apply from the app's next full snapshot, and a selector the app cannot read stops its recording instead of leaving text unmasked</p>
+        <fieldset>
+          <legend>Who to record</legend>
+          <div class="row">
+            <label>Record<select name="mode"><option value="off">Nobody (off)</option><option value="percentage">A percentage of devices</option><option value="accounts">Selected accounts</option></select></label>
+            <label data-mode="percentage">Percentage of devices<input name="percentage" type="number" min="0" max="100" step="0.1"></label>
+          </div>
+          <label data-mode="accounts">Account IDs<textarea name="account_ids" rows="3" placeholder="One account ID per line"></textarea></label>
+        </fieldset>
+        <fieldset>
+          <legend>Storage</legend>
+          <div class="row">
+            <label>Keep recordings for (days)<input name="retention_days" type="number" min="1" max="365" required></label>
+            <label>Daily upload limit (MB)<input name="daily_limit_mb" type="number" min="1" max="1048576" step="1" required></label>
+          </div>
+        </fieldset>
+        <fieldset>
+          <legend>Privacy</legend>
+          <label>Mask text in<small>CSS selectors separated by commas. Matching text plays back as *</small><textarea class="code" name="mask_selector" rows="3" maxlength="20000" spellcheck="false" autocomplete="off" placeholder=".chat-message, [class*=&quot;name&quot;]"></textarea></label>
+          <label>Block elements<small>CSS selectors separated by commas. Matching elements play back as empty boxes</small><textarea class="code" name="block_selector" rows="3" maxlength="20000" spellcheck="false" autocomplete="off" placeholder=".avatar, .private-photo"></textarea></label>
+          <label class="check"><input name="record_images" type="checkbox"><span><strong>Record images the app builds itself</strong><small>Avatars and photos held in the app as data: URLs, up to 128 KB each</small></span></label>
+        </fieldset>
+        <p class="hint">Changes reach open apps within a minute and apply from their next full snapshot. A selector the app cannot read stops its recording instead of leaving text unmasked</p>
+        <p id="settings-error" class="dialog-error" role="alert"></p>
+        <div class="dialog-actions"><button type="button" id="close-settings" class="secondary">Cancel</button><button type="submit">Save settings</button></div>
       </form>
-    </details>
+    </dialog>
+    <dialog id="erase-dialog" class="card" aria-labelledby="erase-title">
+      <form id="erase-confirm" method="dialog">
+        <h2 id="erase-title">Delete every recording of this account?</h2>
+        <p id="erase-text"></p>
+        <label>Type the account ID to confirm<input name="confirm_account" autocomplete="off" spellcheck="false"></label>
+        <div class="dialog-actions"><button type="button" id="erase-cancel" class="secondary">Cancel</button><button type="submit" id="erase-go" class="danger" value="delete" disabled>Delete recordings</button></div>
+      </form>
+    </dialog>
     <div class="workspace">
       <section class="card sessions-panel" aria-label="Sessions">
         <form id="filters" class="filters">

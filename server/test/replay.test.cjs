@@ -9,7 +9,7 @@ const core = require('../pb_hooks/lib/replay-core.js');
 const replay = require('../pb_hooks/lib/replay.js');
 const hash = value => createHash('sha256').update(value).digest('hex');
 const now = Date.now();
-const defaults = { mode: 'off', percentage: 0, account_ids: [], retention_days: 14, daily_limit_mb: 1024, mask_selector: '', block_selector: '' };
+const defaults = { mode: 'off', percentage: 0, account_ids: [], retention_days: 14, daily_limit_mb: 1024, mask_selector: '', block_selector: '', record_images: false };
 const MB = 1024 * 1024;
 
 function validChunk() {
@@ -76,7 +76,7 @@ test('the daily limit is read with the other settings and falls back to its defa
   const app = { findRecordsByFilter: (name, filter, sort, limit) => { query = { name, filter, limit }; return settingRows(stored); } };
   assert.deepEqual(replay.config(app), { ...defaults, ...stored, daily_limit_mb: 1024 });
   assert.match(query.filter, /key = 'daily_limit_mb'/);
-  assert.equal(query.limit, 7);
+  assert.equal(query.limit, 8);
   stored.daily_limit_mb = 2048;
   assert.equal(replay.config(app).daily_limit_mb, 2048);
   stored.daily_limit_mb = 0;
@@ -108,13 +108,24 @@ test('selector settings accept long CSS lists and refuse control characters or o
   assert.equal(cfg.mask_selector, list);
   assert.equal(cfg.block_selector, '.avatar');
   assert.equal(core.settings({ ...defaults, mask_selector: 'x'.repeat(20000) }).mask_selector.length, 20000);
-  const { mask_selector: _mask, block_selector: _block, ...older } = defaults;
+  const { mask_selector: _mask, block_selector: _block, record_images: _images, ...older } = defaults;
   assert.deepEqual(core.settings(older), defaults);
   for (const key of ['mask_selector', 'block_selector']) {
     for (const value of ['x'.repeat(20001), '.a\u0000', '.a\u001b[31m', '.a\u007f', '.a\u000b', 42, ['.a'], { selector: '.a' }]) {
       assert.throws(() => core.settings({ ...defaults, [key]: value }), { status: 400, message: 'Invalid ' + key }, JSON.stringify(value));
     }
   }
+});
+
+test('record_images is off unless saved as true and refuses anything but a boolean', () => {
+  assert.equal(core.DEFAULTS.record_images, false);
+  assert.equal(core.settings({ ...defaults, record_images: undefined }).record_images, false);
+  assert.equal(core.settings({ ...defaults, record_images: true }).record_images, true);
+  for (const value of ['true', 1, 0, 'on', [true], {}]) {
+    assert.throws(() => core.settings({ ...defaults, record_images: value }), { status: 400, message: 'Invalid record_images' }, JSON.stringify(value));
+  }
+  const app = { findRecordsByFilter: (_name, filter) => { assert.match(filter, /key = 'record_images'/); return settingRows({ ...defaults, record_images: true }); } };
+  assert.equal(replay.config(app).record_images, true);
 });
 
 test('selector settings are read with the others and survive a fallback only when valid', () => {
@@ -153,7 +164,7 @@ test('saving settings keeps stored selectors when a form leaves them out and rep
   assert.equal(edited.mask_selector, '.chat,\n.name');
   assert.equal(rows.get('mask_selector').value, JSON.stringify('.chat,\n.name'));
   assert.equal(rows.get('block_selector').value, '""');
-  assert.deepEqual(replay.getSettings(e({})), { ...form, mask_selector: '.chat,\n.name', block_selector: '' });
+  assert.deepEqual(replay.getSettings(e({})), { ...form, mask_selector: '.chat,\n.name', block_selector: '', record_images: false });
   assert.throws(() => replay.saveSettings(e({ ...form, mask_selector: '.a\u0007' })), { status: 400 });
   assert.equal(rows.get('mask_selector').value, JSON.stringify('.chat,\n.name'));
 
@@ -373,7 +384,7 @@ test('config and start send the privacy rules whenever they answer enabled', () 
   fixture.app.db = () => ({ newQuery: () => ({ bind: () => ({ one: result => { result.total = 0; } }) }) });
   const base = { deviceId: 'device-a', platform: 'web' };
   assert.deepEqual(replay.publicConfig(fixture.request(base)), {
-    enabled: true, uploadIntervalMs: core.LIMITS.uploadIntervalMs, maskTextSelector: '.chat,\n[class*="name"]', blockSelector: '.avatar',
+    enabled: true, uploadIntervalMs: core.LIMITS.uploadIntervalMs, maskTextSelector: '.chat,\n[class*="name"]', blockSelector: '.avatar', recordImages: false,
   });
   const started = replay.start(fixture.request(base));
   assert.equal(started.enabled, true);
@@ -384,6 +395,11 @@ test('config and start send the privacy rules whenever they answer enabled', () 
   assert.equal(replay.publicConfig(fixture.request(base)).maskTextSelector, '');
   assert.equal(replay.publicConfig(fixture.request(base)).blockSelector, '');
   assert.equal(replay.start(fixture.request(base)).blockSelector, '');
+  assert.equal(replay.start(fixture.request(base)).recordImages, false);
+
+  fixture.state.settings = { ...defaults, mode: 'percentage', percentage: 100, record_images: true };
+  assert.equal(replay.publicConfig(fixture.request(base)).recordImages, true);
+  assert.equal(replay.start(fixture.request(base)).recordImages, true);
 
   fixture.state.settings = { ...defaults, mask_selector: '.chat' };
   assert.deepEqual(replay.publicConfig(fixture.request(base)), { enabled: false, uploadIntervalMs: core.LIMITS.uploadIntervalMs });

@@ -116,3 +116,21 @@ test('cached private-text patterns mask exactly like per-event patterns', () => 
   const overlap = JSON.parse(serializeEvent({ type: 3, timestamp: 1, data: { source: 0, texts: [{ id: 1, value: 'Samir' }] } }, ['Sam', 'Amir']));
   assert.equal(overlap.data.texts[0].value, 'S*');
 });
+
+test('data: images are blanked unless the record_images setting is on, and stay capped', () => {
+  const avatar = 'data:image/svg+xml;base64,PHN2Zy8+';
+  const photo = 'data:image/jpeg;base64,' + 'A'.repeat(1000);
+  assert.equal(cleanUrl(avatar), '');
+  assert.equal(cleanUrl(avatar, { images: false }), '');
+  assert.equal(cleanUrl(avatar, { images: true }), avatar);
+  assert.equal(cleanUrl(photo, { images: true }), photo);
+  assert.equal(cleanUrl('data:image/png;base64,' + 'A'.repeat(128 * 1024), { images: true }), '');
+  for (const value of ['data:text/html,<script>1</script>', 'data:application/pdf;base64,AAAA', 'blob:https://app.test/1', 'javascript:alert(1)']) {
+    assert.equal(cleanUrl(value, { images: true }), '', value);
+  }
+  const off = JSON.parse(serializeEvent({ type: 2, timestamp: 1, data: { node: { tagName: 'img', attributes: { src: avatar } } } }));
+  assert.equal(off.data.node.attributes.src, '');
+  const on = JSON.parse(serializeEvent({ type: 2, timestamp: 1, data: { node: { tagName: 'img', attributes: { src: avatar, style: `background:url("${avatar}")` } } } }, [], { images: true }));
+  assert.equal(on.data.node.attributes.src, avatar);
+  assert.equal(on.data.node.attributes.style, `background:url("${avatar}")`);
+});

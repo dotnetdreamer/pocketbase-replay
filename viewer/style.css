@@ -16,12 +16,31 @@ button.danger { background: #7b2d36; } button.danger:hover { background: #9a3a45
 input:focus, button:focus-visible, select:focus, textarea:focus { outline: 2px solid #73b7ff; outline-offset: 2px; }
 .card { background: #18212f; border: 1px solid #2e3c50; border-radius: 12px; padding: 20px; margin: 20px 0; }
 .login { max-width: 400px; margin: 48px auto; display: grid; gap: 16px; }
-summary { cursor: pointer; font-weight: 600; }
-details.card { margin: 8px 0 16px; padding: 14px 20px; }
-#settings { display: grid; grid-template-columns: 1fr 1fr 2fr 1fr 1fr; align-items: start; gap: 16px; margin-top: 18px; }
-#settings p { grid-column: 2 / -1; }
-#settings .selectors { grid-column: 1 / -1; }
-#settings .selectors textarea { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 13px; resize: vertical; }
+.header-actions { display: flex; gap: 8px; }
+dialog.card { margin: auto; padding: 22px 24px; width: min(1100px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow-y: auto; color: inherit; }
+dialog::backdrop { background: rgba(5, 8, 13, .7); }
+#erase-dialog { width: min(460px, calc(100vw - 32px)); }
+dialog h2 { margin: 0; }
+#erase-text { margin: 8px 0 16px; }
+.dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+.dialog-error { grid-column: 1 / -1; color: #ffc38a; margin: 0; }
+.dialog-error:empty { display: none; }
+button.secondary { background: transparent; } button.secondary:hover { background: #1f2d42; }
+#settings-dialog { width: min(680px, calc(100vw - 32px)); padding: 22px 24px; }
+#settings { display: grid; gap: 18px; margin-top: 16px; }
+#settings fieldset { display: grid; gap: 12px; margin: 0; padding: 0; border: 0; min-width: 0; }
+#settings fieldset + fieldset { border-top: 1px solid #2e3c50; padding-top: 16px; }
+#settings legend { float: left; width: 100%; padding: 0; margin-bottom: 4px; font-size: 12px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: #8fa3bf; }
+#settings .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+#settings small { font-size: 12px; color: #8fa3bf; }
+#settings textarea { resize: vertical; }
+#settings textarea.code { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 13px; }
+#settings .check { flex-direction: row; align-items: flex-start; gap: 12px; padding: 12px 14px; border: 1px solid #2e3c50; border-radius: 9px; background: #151e2c; cursor: pointer; }
+#settings .check input { flex: none; width: 18px; height: 18px; margin: 2px 0 0; padding: 0; accent-color: #73b7ff; cursor: pointer; }
+#settings .check span { display: grid; gap: 2px; }
+#settings .check strong { font-size: 14px; font-weight: 600; color: #edf2f7; }
+#settings .hint { margin: 0; font-size: 13px; }
+#settings .dialog-actions { margin-top: 0; }
 #status { min-height: 24px; margin: 6px 0 0; } #status.error, #gaps { color: #ffc38a; }
 
 /* Sessions on the left, the open recording on the right. */
@@ -72,5 +91,5 @@ details.card { margin: 8px 0 16px; padding: 14px 20px; }
   .session-scroll { flex: none; max-height: 60vh; }
   #player { flex: none; }
 }
-@media (max-width: 850px) { body { padding: 12px; } #settings { grid-template-columns: 1fr 1fr; } #settings p { grid-column: 1 / -1; } .card { padding: 14px; } }
-@media (max-width: 480px) { #settings { grid-template-columns: 1fr; } .filters label, .filters label:nth-of-type(n+4) { grid-column: 1 / -1; } h1 { font-size: 23px; } }
+@media (max-width: 850px) { body { padding: 12px; } .card { padding: 14px; } }
+@media (max-width: 480px) { #settings .row { grid-template-columns: 1fr; } .filters label, .filters label:nth-of-type(n+4) { grid-column: 1 / -1; } h1 { font-size: 23px; } }
