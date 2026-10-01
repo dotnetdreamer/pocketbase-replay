@@ -1,0 +1,70 @@
+{
+  "name": "capacitor-pocketbase-replay",
+  "version": "0.1.0",
+  "description": "Capacitor plugin for PocketBase Replay, with native app state on Android and iOS",
+  "type": "module",
+  "license": "MIT",
+  "author": "Idrees Khan",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dotnetdreamer/pocketbase-replay.git",
+    "directory": "plugins/capacitor"
+  },
+  "bugs": {
+    "url": "https://github.com/dotnetdreamer/pocketbase-replay/issues"
+  },
+  "homepage": "https://github.com/dotnetdreamer/pocketbase-replay/tree/main/plugins/capacitor#readme",
+  "keywords": [
+    "capacitor",
+    "plugin",
+    "native",
+    "pocketbase",
+    "session replay"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "android/src/main/",
+    "android/build.gradle",
+    "dist/",
+    "ios/Sources/",
+    "Package.swift",
+    "CapacitorPocketbaseReplay.podspec"
+  ],
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "pretest": "npm run build",
+    "test": "node --import tsx --test test/*.test.ts",
+    "verify": "npm run verify:web && npm run verify:android && npm run verify:ios",
+    "verify:web": "npm test",
+    "verify:android": "node scripts/gradle.mjs clean build",
+    "verify:ios": "xcodebuild -scheme CapacitorPocketbaseReplay -destination generic/platform=iOS",
+    "prepack": "npm run build"
+  },
+  "peerDependencies": {
+    "@capacitor/core": ">=8.0.0",
+    "pocketbase-replay": "^0.2.0"
+  },
+  "devDependencies": {
+    "@capacitor/android": "8.5.0",
+    "@capacitor/core": "8.5.0",
+    "pocketbase-replay": "file:../..",
+    "tsx": "4.23.15",
+    "typescript": "5.6.3"
+  },
+  "capacitor": {
+    "ios": {
+      "src": "ios"
+    },
+    "android": {
+      "src": "android"
+    }
+  }
+}

@@ -1,0 +1,24 @@
+node_modules/
+dist/
+*.tgz
+
+# Android
+.gradle/
+build/
+local.properties
+*.iml
+.idea/
+captures/
+.externalNativeBuild/
+.cxx/
+
+# iOS
+.build/
+.swiftpm/
+Package.resolved
+xcuserdata/
+DerivedData/
+Pods/
+Podfile.lock
+
+.DS_Store

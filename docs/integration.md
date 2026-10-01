@@ -103,6 +103,9 @@ To override a detected behavior:
 
 See the [Capacitor example](../examples/capacitor.ts)
 
+The [Capacitor plugin](../plugins/capacitor/README.md) reports pause and resume
+from its own native code, so it does not need `@capacitor/app`
+
 ## Custom transport
 
 A custom `post(url, body)` must return the parsed JSON response and throw

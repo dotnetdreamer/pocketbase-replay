@@ -68,6 +68,9 @@ recording in the dashboard to check playback and masking
 See [client integration](docs/integration.md) for accounts, room metadata,
 lifecycle handling and native asset setup
 
+In a Capacitor app, the [Capacitor plugin](plugins/capacitor/README.md) wraps
+this client and adds native pause and resume
+
 ## Privacy and compatibility
 
 - Input values and editable text are masked by default
@@ -88,6 +91,7 @@ Use HTTPS for remote deployments and keep superuser tokens out of your frontend
 | [Accounts](docs/authentication.md) | Token verification, separate databases and account deletion |
 | [Privacy and limits](docs/privacy-and-limits.md) | Captured data, retries, recording limits and compatibility |
 | [Development](docs/development.md) | Local checks, performance measurement and releases |
+| [Platform plugins](plugins/README.md) | The Capacitor plugin, and how plugins for other platforms stay separate |
 
 ## License
 

@@ -6,3 +6,4 @@ pb_public
 .env
 test
 .replay-evidence
+plugins

@@ -1,0 +1,66 @@
+name: Capacitor plugin
+# The plugin links to the client, so a client change runs this too.
+on:
+  push:
+    paths:
+      - 'plugins/capacitor/**'
+      - 'src/**'
+      - 'scripts/build-client.mjs'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'tsconfig.json'
+      - '.github/workflows/capacitor.yml'
+  pull_request:
+    paths:
+      - 'plugins/capacitor/**'
+      - 'src/**'
+      - 'scripts/build-client.mjs'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'tsconfig.json'
+      - '.github/workflows/capacitor.yml'
+defaults:
+  run:
+    working-directory: plugins/capacitor
+jobs:
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            plugins/capacitor/package-lock.json
+      # Also builds the client through its prepare script.
+      - run: npm ci
+        working-directory: .
+      - run: npm ci
+      - run: npm test
+      - run: npm pack --dry-run
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            plugins/capacitor/package-lock.json
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - run: npm ci
+        working-directory: .
+      - run: npm ci
+      - run: npm run verify:android
+  ios:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: xcodebuild -scheme CapacitorPocketbaseReplay -destination generic/platform=iOS
