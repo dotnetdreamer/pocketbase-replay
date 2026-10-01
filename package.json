@@ -28,7 +28,8 @@
     "build": "node scripts/build-client.mjs && node scripts/build-viewer.mjs",
     "prepack": "npm run build",
     "prepare": "npm run build",
-    "test:integration": "node scripts/verify-observability.mjs"
+    "test:integration": "node scripts/verify-observability.mjs",
+    "test:android": "node scripts/verify-observability-android.mjs"
   },
   "dependencies": {
     "@rrweb/record": "2.1.6",

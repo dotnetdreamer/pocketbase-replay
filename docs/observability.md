@@ -11,7 +11,8 @@ be enabled in the dashboard and in your client configuration
    [installation](installation.md#upgrade-the-extension)
 2. Open `/dash/replay`, sign in as a superuser, and open **Errors and logs settings**
 3. Enable **Collect errors**, **Collect logs**, or both. Set retention and the
-   daily storage limit, then save
+   daily storage limit, then save. Open **Rate limits** to adjust session,
+   request and upload limits for your traffic
 4. Start the client with the corresponding `errors` and `logs` options
 
 Both switches start off on new and upgraded servers. Replay sampling stays
@@ -91,7 +92,18 @@ Log levels are `trace`, `debug`, `info`, `warn`, `error` and `fatal`.
 in place and releases its hooks when the controller stops
 
 For manual exception capture, the optional context supports `attributes`,
-`handled` and a `level` of `error` or `fatal`
+`handled`, `groupingKey` and a `level` of `error` or `fatal`. A grouping key is
+a stable label of up to 128 characters for a known failure, such as
+`checkout-payment`. It overrides automatic stack matching within the same
+service, including when exception names, messages or stacks differ
+
+```ts
+diagnostics.captureException(error, { groupingKey: 'checkout-payment' });
+```
+
+The key is redacted and stored in `attributes.groupingKey`. For automatic
+capture, set that attribute in `beforeSend` when your app recognizes the error.
+Leave it out to use automatic grouping
 
 ```ts
 const diagnostics = startObservability({
@@ -160,12 +172,26 @@ the same object to superusers
 | `logs_retention_days` | 1 to 365 | `14` |
 | `daily_limit_mb` | 1 to 1048576 | `64` |
 | `alert_webhook_url` | Empty, or an `http` or `https` address | Empty |
+| `sessions_per_device_hour` | 1 to 1000000 | `30` |
+| `sessions_per_ip_hour` | 1 to 1000000 | `120` |
+| `sessions_per_hour` | 1 to 1000000 | `20000` |
+| `config_requests_per_ip_minute` | 1 to 1000000 | `120` |
+| `upload_requests_per_ip_minute` | 1 to 1000000 | `120` |
+| `upload_mb_per_ip_hour` | 1 to 1048576 | `8` |
 
 The daily limit conservatively counts received error and log data, issue
-summaries and new alerts over the last 24 hours.
+summaries and new alerts over the last 24 hours. Its counter commits with
+the uploaded entries, and a refused batch rolls it back. SQL totals refresh
+once per minute
 Replay has its own storage budget. Settings changes apply at ingestion, so a
 disabled feature immediately refuses new uploads. Clients refresh their
 configuration every 45 seconds
+
+Session limits count newly issued credentials. Renewing the same credential
+does not consume another session. Configuration requests have their own
+minute limit; the upload request limit applies separately to errors and logs.
+The IP upload allowance is shared by both. MB values mean 1024 × 1024 bytes.
+Older settings and dashboard saves retain omitted values
 
 ## Issues and alerts
 
@@ -173,7 +199,9 @@ The **Issues** tab groups similar exceptions by service, exception name and
 the top stack frames. A frame is reduced to its function and file: the origin
 (`https://localhost` on Android, `capacitor://localhost` on iOS), the build hash
 in a file name such as `index-BHg5Ehe4.js`, and line numbers are left out, so
-the same error groups across platforms and releases. Minified one- and
+common errors group across platforms and releases. Automatic matching is a
+heuristic; use a stable `groupingKey` when your app needs deterministic grouping.
+Minified one- and
 two-letter function names change with every build, so when fewer than two
 frames are named, the message decides instead, with numbers, hex values, UUIDs
 and record IDs ignored. Without a stack the message decides as well. The
@@ -192,7 +220,10 @@ while it is open, and **Mark read** acknowledges one. Turn **Issue alerts** off
 to stop raising new alerts; existing alerts remain until deleted or expired
 
 To be told without opening the dashboard, enter an **Alert webhook**. Within a
-minute of an alert, the server posts it there, up to 20 alerts in one message:
+minute of an alert, the server starts posting it there, up to 20 alerts per
+sweep. Discord receives multiple messages when needed to fit complete alerts
+within its message limit. Only accepted messages are marked sent, so a failed
+message retries without repeating the successful ones:
 
 - Slack incoming webhooks and Google Chat get `{ "text": "..." }`
 - Discord webhooks get `{ "content": "..." }`

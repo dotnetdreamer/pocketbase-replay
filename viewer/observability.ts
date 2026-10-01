@@ -16,13 +16,48 @@ export interface IssueAlert {
   id: string; issueId: string; title: string; kind: 'created' | 'regressed'; timestamp: number; acknowledged: boolean;
   delivery?: 'none' | 'pending' | 'sent' | 'failed';
 }
-export interface ObservabilitySettings {
+export const OBSERVABILITY_RATE_DEFAULTS = {
+  sessions_per_device_hour: 30, sessions_per_ip_hour: 120, sessions_per_hour: 20000,
+  config_requests_per_ip_minute: 120, upload_requests_per_ip_minute: 120, upload_mb_per_ip_hour: 8,
+} as const;
+export interface ObservabilitySettings extends Record<keyof typeof OBSERVABILITY_RATE_DEFAULTS, number> {
   errors_enabled: boolean; logs_enabled: boolean; alerts_enabled: boolean;
   errors_retention_days: number; logs_retention_days: number; daily_limit_mb: number; alert_webhook_url?: string;
 }
 export interface LogVolume {
   from: number; to: number; bucketMs: number; total: number;
   buckets: { start: number; counts: Partial<Record<string, number>> }[];
+}
+export class LogVolumeRequest {
+  value: LogVolume | undefined;
+  loading = false;
+  failed = false;
+  private generation = 0;
+
+  reset(): void {
+    this.generation++;
+    this.value = undefined;
+    this.loading = false;
+    this.failed = false;
+  }
+
+  async load(query: URLSearchParams, request: (query: URLSearchParams) => Promise<LogVolume>, changed: () => void): Promise<void> {
+    this.reset();
+    const generation = this.generation;
+    this.loading = true;
+    changed();
+    try {
+      const result = await request(new URLSearchParams(query));
+      if (generation === this.generation) this.value = result;
+    } catch {
+      if (generation === this.generation) this.failed = true;
+    } finally {
+      if (generation === this.generation) {
+        this.loading = false;
+        changed();
+      }
+    }
+  }
 }
 export interface VolumeColumn { start: number; end: number; total: number; groups: number[]; counts: Partial<Record<string, number>> }
 

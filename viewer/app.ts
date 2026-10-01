@@ -4,7 +4,7 @@ import './style.css';
 import { dayBound, IDLE_KEPT_MS, recordedAt, recoverEvents, shortenIdle, type IdlePeriod, type StoredChunk } from './decode';
 import { keepPlaying } from './player';
 import {
-  bucketLabel, PagedRecords, replayOffset, telemetryQuery, VOLUME_GROUPS, volumeColumns, volumeScale,
+  bucketLabel, LogVolumeRequest, OBSERVABILITY_RATE_DEFAULTS, PagedRecords, replayOffset, telemetryQuery, VOLUME_GROUPS, volumeColumns, volumeScale,
   type ErrorOccurrence, type Issue, type IssueAlert, type IssueStatus, type LogEntry, type LogVolume, type ObservabilitySettings, type VolumeColumn,
 } from './observability';
 
@@ -50,7 +50,7 @@ const readAlerts = new Set<string>();
 const acknowledgingAlerts = new Set<string>();
 let volume: LogVolume | undefined;
 let volumeData: VolumeColumn[] = [];
-let volumeGeneration = 0;
+const volumeRequest = new LogVolumeRequest();
 let volumeFocus = -1;
 try { token = sessionStorage.getItem('pocketbase-replay-admin') ?? ''; } catch { /* Memory-only login. */ }
 
@@ -438,6 +438,9 @@ async function loadObservabilitySettings(): Promise<void> {
   for (const key of ['errors_retention_days', 'logs_retention_days', 'daily_limit_mb'] as const) {
     field('observability-settings', key).value = String(settings[key]);
   }
+  for (const key of Object.keys(OBSERVABILITY_RATE_DEFAULTS) as (keyof typeof OBSERVABILITY_RATE_DEFAULTS)[]) {
+    field('observability-settings', key).value = String(settings[key] ?? OBSERVABILITY_RATE_DEFAULTS[key]);
+  }
   // An older server has no webhook setting.
   field('observability-settings', 'alert_webhook_url').value = typeof settings.alert_webhook_url === 'string' ? settings.alert_webhook_url : '';
   $('webhook-test-state').textContent = '';
@@ -524,6 +527,7 @@ function renderIssues(): void {
 
 async function searchIssues(): Promise<void> {
   const query = filterQuery('issue-filters', ['q', 'status', 'service', 'accountId', 'deviceId', 'sessionId', 'from', 'to']);
+  showAdvancedFilterCount('issue-filters', query);
   issues.reset(query);
   closeIssue();
   renderIssues();
@@ -694,10 +698,16 @@ function renderLogs(): void {
 
 async function searchLogs(): Promise<void> {
   const query = filterQuery('log-filters', ['q', 'level', 'service', 'accountId', 'deviceId', 'sessionId', 'from', 'to']);
+  showAdvancedFilterCount('log-filters', query);
   logs.reset(query);
   closeLog();
   renderLogs();
   await Promise.all([loadLogs(), loadVolume(query)]);
+}
+
+function showAdvancedFilterCount(id: string, query: URLSearchParams): void {
+  const count = ['accountId', 'deviceId', 'sessionId', 'from', 'to'].filter((key) => query.has(key)).length;
+  form(id).querySelector<HTMLElement>('.filter-options summary span')!.textContent = count ? ` (${count} active)` : '';
 }
 
 const SVG = 'http://www.w3.org/2000/svg';
@@ -708,31 +718,29 @@ function svg<K extends keyof SVGElementTagNameMap>(name: K, attributes: Record<s
 }
 
 function clearVolume(): void {
-  volumeGeneration++;
-  volume = undefined;
-  volumeData = [];
-  volumeFocus = -1;
+  volumeRequest.reset();
+  renderVolumeState();
+}
+
+function emptyVolume(): void {
   $('log-volume').hidden = true;
-  $('log-volume').classList.remove('refreshing');
   $('log-volume-chart').replaceChildren();
   $('log-volume-table').replaceChildren();
   $('log-volume-tip').hidden = true;
 }
 
-// A new search keeps the old chart, dimmed, until its own counts arrive.
-async function loadVolume(query: URLSearchParams): Promise<void> {
-  const generation = ++volumeGeneration;
-  $('log-volume').classList.add('refreshing');
-  try {
-    const result: LogVolume = await request(`/api/replay/logs/volume?${query}`);
-    if (generation !== volumeGeneration) return;
-    volume = result;
-    volumeData = volumeColumns(result);
-    volumeFocus = -1;
-    renderVolume();
-  } finally {
-    if (generation === volumeGeneration) $('log-volume').classList.remove('refreshing');
-  }
+function renderVolumeState(): void {
+  volume = volumeRequest.value;
+  volumeData = volume ? volumeColumns(volume) : [];
+  volumeFocus = -1;
+  $('log-volume-state').textContent = volumeRequest.failed ? 'Could not load log volume. Use Find logs to retry'
+    : volumeRequest.loading ? 'Loading log volume...' : '';
+  $('log-volume-state').classList.toggle('error', volumeRequest.failed);
+  renderVolume();
+}
+
+function loadVolume(query: URLSearchParams): Promise<void> {
+  return volumeRequest.load(query, (current) => request(`/api/replay/logs/volume?${current}`), renderVolumeState);
 }
 
 function periodLabel(column: VolumeColumn): string {
@@ -752,7 +760,7 @@ const VOLUME_BOX = { height: 124, left: 44, right: 6, top: 8, bottom: 22 };
 function renderVolume(): void {
   const chart = $('log-volume-chart');
   $('log-volume-tip').hidden = true;
-  if (!volume || !volume.total || !volumeData.length) { clearVolume(); return; }
+  if (!volume || !volume.total || !volumeData.length) { emptyVolume(); return; }
   $('log-volume').hidden = false;
   $('log-volume-range').textContent = `${volume.total.toLocaleString()} in ${bucketLabel(volume.bucketMs)} periods`;
   const width = Math.max(240, chart.clientWidth), { height, left, right, top, bottom } = VOLUME_BOX;
@@ -1079,6 +1087,12 @@ form('observability-settings').addEventListener('submit', (event) => {
       logs_retention_days: Number(field('observability-settings', 'logs_retention_days').value),
       daily_limit_mb: Number(field('observability-settings', 'daily_limit_mb').value),
       alert_webhook_url: field('observability-settings', 'alert_webhook_url').value.trim(),
+      sessions_per_device_hour: Number(field('observability-settings', 'sessions_per_device_hour').value),
+      sessions_per_ip_hour: Number(field('observability-settings', 'sessions_per_ip_hour').value),
+      sessions_per_hour: Number(field('observability-settings', 'sessions_per_hour').value),
+      config_requests_per_ip_minute: Number(field('observability-settings', 'config_requests_per_ip_minute').value),
+      upload_requests_per_ip_minute: Number(field('observability-settings', 'upload_requests_per_ip_minute').value),
+      upload_mb_per_ip_hour: Number(field('observability-settings', 'upload_mb_per_ip_hour').value),
     };
     await request('/api/replay/observability/settings', settings);
     await loadObservabilitySettings();
@@ -1138,6 +1152,11 @@ for (const tab of ['sessions', 'issues', 'logs'] as const) {
   });
 }
 form('issue-filters').addEventListener('submit', (event) => { event.preventDefault(); run(searchIssues); });
+for (const id of ['observability-settings', 'issue-filters', 'log-filters']) {
+  form(id).addEventListener('invalid', (event) => {
+    if (event.target instanceof HTMLElement) event.target.closest('details')?.setAttribute('open', '');
+  }, true);
+}
 form('log-filters').addEventListener('submit', (event) => { event.preventDefault(); run(searchLogs); });
 $('issues-more').addEventListener('click', () => run(loadIssues));
 $('logs-more').addEventListener('click', () => run(loadLogs));

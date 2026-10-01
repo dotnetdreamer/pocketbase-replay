@@ -72,7 +72,9 @@ try {
   for (const path of [settingsPath, '/api/replay/issues', '/api/replay/logs', '/api/replay/alerts']) await request(path, undefined, '', 'GET', 401);
   check('all dashboard reads require a superuser', () => assert.ok(true));
 
-  const settings = { errors_enabled: true, logs_enabled: true, alerts_enabled: true, errors_retention_days: 30, logs_retention_days: 14, daily_limit_mb: 64 };
+  const settings = { errors_enabled: true, logs_enabled: true, alerts_enabled: true, errors_retention_days: 30, logs_retention_days: 14, daily_limit_mb: 64,
+    sessions_per_device_hour: 30, sessions_per_ip_hour: 120, sessions_per_hour: 20000,
+    config_requests_per_ip_minute: 120, upload_requests_per_ip_minute: 120, upload_mb_per_ip_hour: 8 };
   await request(settingsPath, settings, admin);
   const config = await request(configPath, meta);
   check('features can be enabled independently of recording', () => { assert.equal(config.errorsEnabled, true); assert.equal(config.logsEnabled, true); assert.ok(config.token); });
@@ -254,6 +256,63 @@ try {
     assert.equal(counted, listed.totalItems);
     assert.ok(volume.buckets.length >= 1 && volume.buckets.length <= 61);
   });
+
+  const cronDeadline = Date.now() + 70000;
+  while (!received.some((body) => body.body.alerts?.some((item) => item.id === waiting.id))) {
+    if (Date.now() > cronDeadline) throw new Error('The minute job did not deliver its queued alert');
+    await wait(250);
+  }
+  const delivered = (await request('/api/replay/alerts', undefined, admin)).items.find((item) => item.id === waiting.id);
+  check('the real minute job delivers a queued webhook and marks it sent', () => assert.equal(delivered.delivery, 'sent'));
+
+  await request(settingsPath, { ...settings, sessions_per_device_hour: 1 }, admin);
+  const limitedMeta = { ...meta, deviceId: 'configured-limit-device' };
+  const limited = await request(configPath, limitedMeta);
+  await request(configPath, limitedMeta, '', 'POST', 429);
+  const renewed = await request(configPath, { ...limitedMeta, token: limited.token });
+  check('configured session limits apply while credential renewal remains allowed', () => assert.equal(renewed.token, limited.token));
+  await request(settingsPath, settings, admin);
+
+  await request('/api/replay/errors', { token: config.token, events: [
+    { ...error, id: 'explicit-grouping-first', service: 'stable-group', attributes: { groupingKey: 'payment' } },
+    { ...error, id: 'explicit-grouping-second', service: 'stable-group', name: 'PaymentException', message: 'Different platform message', stack: 'other@capacitor://localhost/different.js:99:1', attributes: { groupingKey: 'payment' } },
+  ] });
+  const grouped = await request('/api/replay/issues?service=stable-group', undefined, admin);
+  check('an explicit grouping key joins different stacks and exception names', () => { assert.equal(grouped.items.length, 1); assert.equal(grouped.items[0].occurrenceCount, 2); });
+
+  const legacyAttributes = await request('/api/replay/errors', { token: config.token, events: [
+    { ...error, id: 'legacy-grouping-attribute', attributes: { groupingKey: 42 } },
+    { ...error, id: 'legacy-batch-neighbor' },
+  ] });
+  check('older arbitrary grouping attributes do not reject neighboring errors', () => assert.equal(legacyAttributes.accepted, 2));
+
+  const allErrors = (await request('/api/collections/replay_errors/records?perPage=500', undefined, admin)).items;
+  const allLogs = (await request('/api/collections/replay_logs/records?perPage=500', undefined, admin)).items;
+  const originalBytes = allLogs[0].byteSize;
+  const originalTotal = [...allErrors, ...allLogs].reduce((sum, item) => sum + item.byteSize, 0);
+  const budgetRow = (await request('/api/collections/replay_settings/records?perPage=500', undefined, admin)).items.find((item) => item.key === 'observability:daily-bytes');
+  const cap = 1024 * 1024, seeded = cap - 1000;
+  try {
+    await request(settingsPath, { ...settings, daily_limit_mb: 1 }, admin);
+    await request('/api/collections/replay_logs/records/' + allLogs[0].id, { byteSize: seeded - (originalTotal - originalBytes) }, admin, 'PATCH');
+    await request('/api/collections/replay_settings/records/' + budgetRow.id, { value: JSON.stringify({ at: Date.now(), bytes: seeded }) }, admin, 'PATCH');
+    const responses = await Promise.all(Array.from({ length: 12 }, (_, i) => fetch(endpoint + '/api/replay/logs', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: config.token, events: [{ ...log, id: 'concurrent-budget-' + i }] }),
+    })));
+    const budget = JSON.parse((await request('/api/collections/replay_settings/records/' + budgetRow.id, undefined, admin)).value);
+    check('concurrent HTTP uploads admit one entry within the remaining storage budget', () => {
+      assert.equal(responses.filter((response) => response.status === 200).length, 1);
+      assert.equal(responses.filter((response) => response.status === 429).length, 11);
+      assert.ok(budget.bytes <= cap);
+    });
+  } finally {
+    await request('/api/collections/replay_logs/records/' + allLogs[0].id, { byteSize: originalBytes }, admin, 'PATCH');
+    const finalLogs = (await request('/api/collections/replay_logs/records?perPage=500', undefined, admin)).items;
+    const finalTotal = [...allErrors, ...finalLogs].reduce((sum, item) => sum + item.byteSize, 0);
+    await request('/api/collections/replay_settings/records/' + budgetRow.id, { value: JSON.stringify({ at: Date.now(), bytes: finalTotal }) }, admin, 'PATCH');
+    await request(settingsPath, settings, admin);
+  }
 
   console.log(`Observability integration passed: ${checks} checks`);
   if (process.argv.includes('--serve')) {

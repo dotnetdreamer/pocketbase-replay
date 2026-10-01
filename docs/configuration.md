@@ -6,7 +6,9 @@
 
 Errors and logs have independent switches in the dashboard's Error and log
 settings. Each has its own retention period, and they share a daily storage
-budget. These switches do not change replay sampling
+budget. Open **Rate limits** to adjust new credentials per device, per IP and
+across the server, requests per minute, and the shared IP upload allowance.
+These switches do not change replay sampling
 
 See [errors and logs](observability.md) for the settings table and client options
 

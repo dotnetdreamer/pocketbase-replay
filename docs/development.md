@@ -17,8 +17,9 @@ Tests cover queue bounds, retries, snapshot recovery, masking, settings, server
 privacy rules, lifecycle, Capacitor detection, server validation, account
 verification, erasure and migration isolation
 
-Error and log checks also cover issue grouping, alerts, filtering, credential
-scope, redaction, bounded queues and plugin capture methods
+Error and log checks also cover explicit grouping keys, complete Discord
+messages and partial retries, concurrent storage admission, transaction
+rollback, configured rate limits, stale chart requests and plugin capture
 
 To verify the hooks and migration against real PocketBase 0.39.9:
 
@@ -28,7 +29,9 @@ REPLAY_PB_BIN=/path/to/pocketbase npm run test:integration
 
 The runner installs into a temporary directory, starts an isolated server on
 port 8099, checks ingestion and dashboard APIs, and removes its data on exit.
-Set `REPLAY_TEST_PORT` to use another free port
+It checks actual cron webhook delivery to a local receiver and concurrent
+uploads near the storage limit. It can wait up to 70 seconds for the minute
+job. Set `REPLAY_TEST_PORT` to use another free port
 
 For a browser check, leave the fixture running until Ctrl+C:
 
@@ -37,6 +40,31 @@ REPLAY_PB_BIN=/path/to/pocketbase npm run test:integration -- --serve
 ```
 
 Open the printed dashboard URL and use the local credentials the runner prints
+
+## Android WebView checks
+
+Install the Android SDK, Java 21 and Maestro. Run one visible emulator, or
+select a connected device with `REPLAY_ANDROID_DEVICE`. The runner reuses
+that device and builds a separate Capacitor test app
+
+```sh
+REPLAY_PB_BIN=/path/to/pocketbase npm run test:android
+```
+
+The Maestro flow checks real JavaScript stacks, DOMException fields, startup
+buffering, explicit grouping, replay-only starts and native background and
+resume. The runner then verifies the stored errors and logs in PocketBase.
+It removes its app, temporary build, server and any reverse port it created
+
+To use the already-running local fixture from the browser check:
+
+```sh
+npm run test:android -- --endpoint http://localhost:8099
+```
+
+Use `--keep-open` to inspect the test app before Ctrl+C cleans it up. The
+runner accepts only loopback HTTP fixtures. Native process crashes and
+system logs remain outside these APIs
 
 ## Performance checks
 

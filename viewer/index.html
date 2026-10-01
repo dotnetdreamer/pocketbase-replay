@@ -44,6 +44,24 @@
           <legend>Storage</legend>
           <label>Daily error and log upload limit (MB)<input name="daily_limit_mb" type="number" min="1" max="1048576" step="1" required></label>
         </fieldset>
+        <details class="settings-advanced">
+          <summary>Rate limits</summary>
+          <fieldset>
+            <legend>New upload credentials</legend>
+            <div class="row">
+              <label>Per device each hour<input name="sessions_per_device_hour" type="number" min="1" max="1000000" step="1" required></label>
+              <label>Per IP each hour<input name="sessions_per_ip_hour" type="number" min="1" max="1000000" step="1" required></label>
+            </div>
+            <label>Total each hour<input name="sessions_per_hour" type="number" min="1" max="1000000" step="1" required></label>
+          </fieldset>
+          <fieldset>
+            <legend>Requests and uploads</legend>
+            <label>Config requests per IP each minute<input name="config_requests_per_ip_minute" type="number" min="1" max="1000000" step="1" required></label>
+            <label>Upload requests per IP each minute<input name="upload_requests_per_ip_minute" type="number" min="1" max="1000000" step="1" required></label>
+            <label>Upload limit per IP each hour (MB)<input name="upload_mb_per_ip_hour" type="number" min="1" max="1048576" step="1" required></label>
+          </fieldset>
+          <p class="hint">Upload request limits apply separately to errors and logs. The IP upload allowance is shared. Active clients renew their credentials</p>
+        </details>
         <p class="hint">Error and log collection start off. These settings apply separately from session recording</p>
         <p id="observability-settings-error" class="dialog-error" role="alert"></p>
         <div class="dialog-actions"><button id="close-observability-settings" type="button" class="secondary">Cancel</button><button type="submit">Save error and log settings</button></div>
@@ -122,14 +140,19 @@
             <label class="wide">Search errors<input name="q" type="search" placeholder="Error message or name" autocomplete="off" maxlength="500"></label>
             <label>Status<select name="status"><option value="open">Open</option><option value="resolved">Resolved</option><option value="ignored">Ignored</option><option value="">All statuses</option></select></label>
             <label>Service<input name="service" autocomplete="off"></label>
-            <label>Account<input name="accountId" autocomplete="off"></label>
-            <label>Device<input name="deviceId" autocomplete="off"></label>
-            <label class="wide">Session<input name="sessionId" autocomplete="off"></label>
-            <label>From<input name="from" type="date"></label>
-            <label>Through<input name="to" type="date"></label>
+            <details class="filter-options">
+              <summary>More filters<span></span></summary>
+              <div class="telemetry-filter-fields">
+                <label>Account<input name="accountId" autocomplete="off"></label>
+                <label>Device<input name="deviceId" autocomplete="off"></label>
+                <label class="wide">Session<input name="sessionId" autocomplete="off"></label>
+                <label>From<input name="from" type="date"></label>
+                <label>Through<input name="to" type="date"></label>
+              </div>
+            </details>
             <button type="submit">Find issues</button>
           </form>
-          <details class="issue-alerts" open>
+          <details class="issue-alerts">
             <summary>Issue alerts <span id="alert-count"></span></summary>
             <div class="alerts-heading"><p id="alerts-state" role="status"></p><button id="refresh-alerts" type="button" class="secondary">Refresh</button></div>
             <ul id="alerts" class="telemetry-list alert-list"></ul>
@@ -160,17 +183,23 @@
             <label class="wide">Search logs<input name="q" type="search" placeholder="Log message or attributes" autocomplete="off" maxlength="500"></label>
             <label>Level<select name="level"><option value="">All levels</option><option value="trace">Trace</option><option value="debug">Debug</option><option value="info">Info</option><option value="warn">Warning</option><option value="error">Error</option><option value="fatal">Fatal</option></select></label>
             <label>Service<input name="service" autocomplete="off"></label>
-            <label>Account<input name="accountId" autocomplete="off"></label>
-            <label>Device<input name="deviceId" autocomplete="off"></label>
-            <label class="wide">Session<input name="sessionId" autocomplete="off"></label>
-            <label>From<input name="from" type="date"></label>
-            <label>Through<input name="to" type="date"></label>
+            <details class="filter-options">
+              <summary>More filters<span></span></summary>
+              <div class="telemetry-filter-fields">
+                <label>Account<input name="accountId" autocomplete="off"></label>
+                <label>Device<input name="deviceId" autocomplete="off"></label>
+                <label class="wide">Session<input name="sessionId" autocomplete="off"></label>
+                <label>From<input name="from" type="date"></label>
+                <label>Through<input name="to" type="date"></label>
+              </div>
+            </details>
             <button type="submit">Find logs</button>
           </form>
           <p id="log-count" class="session-count"></p>
           <div class="telemetry-scroll"><ul id="logs" class="telemetry-list"></ul><p id="logs-state" class="list-state" role="status"></p><button id="logs-more" type="button" hidden>Load more logs</button></div>
         </section>
         <section class="card telemetry-detail" aria-label="Log volume and details">
+          <p id="log-volume-state" class="list-state" role="status" aria-live="polite"></p>
           <section id="log-volume" class="log-volume" aria-labelledby="log-volume-title" hidden>
             <div class="volume-heading"><h3 id="log-volume-title">Log volume</h3><p id="log-volume-range"></p></div>
             <ul class="volume-legend">

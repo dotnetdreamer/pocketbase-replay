@@ -26,15 +26,16 @@ function eventId(now: number): string {
   return `${now.toString(36)}-${(++sequence).toString(36)}-${Math.random().toString(36).slice(2, 14)}`;
 }
 
-// An entry over the size limit loses its attributes, then the end of its stack, then of its message,
-// rather than being dropped whole. Text outside Latin script takes two to four bytes a character.
+// Oversized entries keep their grouping key while shedding attributes and shortening stack and message text.
+// Text outside Latin script takes two to four bytes a character.
 function fit(event: ObservabilityEvent): string | null {
   const { kind: _kind, ...payload } = event;
   let candidate: Record<string, unknown> = payload;
   let json = JSON.stringify(candidate);
   if (byteLength(json) <= OBSERVABILITY_LIMITS.eventBytes) return json;
   if (candidate.attributes) {
-    candidate = { ...candidate, attributes: { truncated: true } };
+    const groupingKey = event.kind === 'error' ? event.attributes?.groupingKey : undefined;
+    candidate = { ...candidate, attributes: { truncated: true, ...(typeof groupingKey === 'string' && groupingKey ? { groupingKey } : {}) } };
     json = JSON.stringify(candidate);
   }
   for (const key of ['stack', 'message']) {
@@ -151,6 +152,8 @@ export function createObservability(options: ObservabilityOptions, runtime: Obse
     };
   }
   function sanitize(event: ObservabilityEvent, text: string[]): ObservabilityEvent {
+    const attributes = safeAttributes(event.attributes, text);
+    if (event.kind === 'error' && typeof attributes?.groupingKey === 'string') attributes.groupingKey = redactLabel(attributes.groupingKey, text, 128).trim();
     const common = {
       id: event.id, timestamp: event.timestamp,
       ...(event.service ? { service: redactLabel(event.service, text, 128) } : {}),
@@ -159,7 +162,7 @@ export function createObservability(options: ObservabilityOptions, runtime: Obse
         typeof event.sessionToken === 'string' && /^[A-Za-z0-9]{64}$/.test(event.sessionToken)
         ? { sessionId: event.sessionId, sessionToken: event.sessionToken } : {}),
       message: redactText(typeof event.message === 'string' ? event.message : '', text),
-      attributes: safeAttributes(event.attributes, text),
+      attributes,
     };
     return event.kind === 'error' ? {
       ...common, kind: 'error', name: redactLabel(typeof event.name === 'string' ? event.name : 'Error', text, 128),
@@ -195,8 +198,10 @@ export function createObservability(options: ObservabilityOptions, runtime: Obse
       const common = captureContext('error');
       if (!common) return null;
       const { identity: entryIdentity, ...fields } = common;
+      const groupingKey = typeof context.groupingKey === 'string' ? redactLabel(context.groupingKey, privateText(), 128).trim() : '';
+      const attributes = groupingKey ? Object.assign({ groupingKey }, safeAttributes(context.attributes, privateText()), { groupingKey }) : context.attributes;
       return enqueue({ ...fields, ...describeException(error, privateText()), kind: 'error',
-        handled: context.handled !== false, level: context.level === 'fatal' ? 'fatal' : 'error', attributes: context.attributes } as CapturedException, entryIdentity);
+        handled: context.handled !== false, level: context.level === 'fatal' ? 'fatal' : 'error', attributes } as CapturedException, entryIdentity);
     } catch { metrics.droppedEvents++; return null; }
     finally { capturing = false; }
   }

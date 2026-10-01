@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { shortenIdle, type ReplayEvent } from '../viewer/decode';
-import { bucketLabel, PagedRecords, replayOffset, telemetryQuery, volumeColumns, volumeScale } from '../viewer/observability';
+import { bucketLabel, LogVolumeRequest, PagedRecords, replayOffset, telemetryQuery, volumeColumns, volumeScale, type LogVolume } from '../viewer/observability';
 
 test('error and log filters preserve literal search text and use local day bounds', () => {
   const query = telemetryQuery({ q: ' a" || level="fatal ', service: ' api ', accountId: ' user ', deviceId: '', sessionId: ' session-1 ', from: '2026-10-01', to: '2026-10-02' });
@@ -86,4 +86,58 @@ test('log volume folds six levels into four stacked groups with errors on the ba
   assert.deepEqual([0, 1, 7, 8, 10, 11, 160, 999, 1001].map(volumeScale), [1, 1, 10, 10, 10, 20, 200, 1000, 2000]);
   assert.deepEqual([60_000, 300_000, 3_600_000, 10_800_000, 86_400_000, 604_800_000].map(bucketLabel),
     ['1-minute', '5-minute', '1-hour', '3-hour', '1-day', '7-day']);
+});
+
+function pendingVolume() {
+  let resolve!: (value: LogVolume) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<LogVolume>((yes, no) => { resolve = yes; reject = no; });
+  return { promise, resolve, reject };
+}
+const exampleVolume: LogVolume = { from: 0, to: 59999, bucketMs: 60000, total: 1, buckets: [{ start: 0, counts: { info: 1 } }] };
+
+test('a failed volume search clears previous counts and an older failure cannot hide newer results', async () => {
+  const volume = new LogVolumeRequest();
+  let shown: LogVolume | undefined;
+  const render = () => { shown = volume.value; };
+  await volume.load(new URLSearchParams(), async () => exampleVolume, render);
+  assert.equal(shown, exampleVolume);
+  const old = pendingVolume();
+  const oldSearch = volume.load(new URLSearchParams('service=old'), () => old.promise, render);
+  assert.equal(shown, undefined);
+  assert.equal(volume.loading, true);
+  const failed = volume.load(new URLSearchParams('service=failed'), async () => { throw Error('Unavailable'); }, render);
+  await failed;
+  assert.equal(shown, undefined);
+  assert.equal(volume.failed, true);
+  assert.equal(volume.loading, false);
+  const latest = { ...exampleVolume, total: 2 };
+  await volume.load(new URLSearchParams('service=latest'), async () => latest, render);
+  old.reject(Error('Earlier search failed'));
+  await oldSearch;
+  assert.equal(shown, latest);
+  assert.equal(volume.failed, false);
+});
+
+test('late volume responses cannot revive counts after a newer failure or dashboard reset', async () => {
+  const volume = new LogVolumeRequest();
+  let renders = 0;
+  const render = () => { renders++; };
+  const old = pendingVolume();
+  const oldSearch = volume.load(new URLSearchParams(), () => old.promise, render);
+  await volume.load(new URLSearchParams('level=error'), async () => { throw Error('Unavailable'); }, render);
+  const beforeLateResponse = renders;
+  old.resolve(exampleVolume);
+  await oldSearch;
+  assert.equal(renders, beforeLateResponse);
+  assert.equal(volume.value, undefined);
+  assert.equal(volume.failed, true);
+  const signedOut = pendingVolume();
+  const loading = volume.load(new URLSearchParams(), () => signedOut.promise, render);
+  volume.reset();
+  signedOut.resolve(exampleVolume);
+  await loading;
+  assert.equal(volume.value, undefined);
+  assert.equal(volume.failed, false);
+  assert.equal(volume.loading, false);
 });

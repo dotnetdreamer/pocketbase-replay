@@ -1,7 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { createHash } = require('node:crypto');
-const { DatabaseSync } = require('node:sqlite');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
@@ -9,133 +8,7 @@ const core = require('../pb_hooks/lib/observability-core.js');
 const observability = require('../pb_hooks/lib/observability.js');
 const replay = require('../pb_hooks/lib/replay.js');
 const hash = value => createHash('sha256').update(value).digest('hex');
-const now = Date.now();
-
-function fixture() {
-  const database = new DatabaseSync(':memory:');
-  database.exec('PRAGMA foreign_keys = ON');
-  const collections = new Map();
-  const store = new Map();
-  let sequence = 0;
-  let tokens = 0;
-  let depth = 0;
-  class Row {
-    constructor(collection, data) { this.collection = collection; this.data = data || {}; this.id = this.data.id || ''; }
-    set(key, value) { this.data[key] = value; }
-    getString(key) { return this.data[key] === undefined ? '' : String(this.data[key]); }
-    getFloat(key) { return Number(this.data[key]) || 0; }
-    getInt(key) { return this.getFloat(key); }
-    getBool(key) { return !!this.data[key]; }
-  }
-  function statement(sql, params) {
-    const prepared = database.prepare(sql.replace(/\{:(\w+)\}/g, '$$$1'));
-    const bound = {};
-    for (const [key, value] of Object.entries(params || {})) if (sql.includes('{:' + key + '}')) bound[key] = typeof value === 'boolean' ? Number(value) : value;
-    return { prepared, bound };
-  }
-  function query(sql, params, all) {
-    const { prepared, bound } = statement(sql, params);
-    return all ? prepared.all(bound) : prepared.get(bound);
-  }
-  function records(name, where, sort, limit, offset, params) {
-    const order = sort ? ' ORDER BY ' + sort.split(',').map(value => value.startsWith('-') ? value.slice(1) + ' DESC' : value + ' ASC').join(',') : '';
-    return query('SELECT * FROM ' + name + ' WHERE ' + (where || '1=1').replace(/&&/g, ' AND ').replace(/\|\|/g, ' OR ') + order + ' LIMIT ' + (limit || 10000) + ' OFFSET ' + (offset || 0), params, true)
-      .map(data => new Row(collections.get(name), data));
-  }
-  const app = {
-    store: () => ({ get: key => store.get(key), set: (key, value) => store.set(key, value) }),
-    findCollectionByNameOrId: name => { if (!collections.has(name)) throw new Error('Missing collection ' + name); return collections.get(name); },
-    findRecordsByFilter: records,
-    findRecordById: (name, id) => { const rows = records(name, 'id = {:id}', '', 1, 0, { id }); if (!rows.length) throw new Error('Not found'); return rows[0]; },
-    findFirstRecordByData: (name, key, value) => { const rows = records(name, key + ' = {:value}', '', 1, 0, { value }); if (!rows.length) throw new Error('Not found'); return rows[0]; },
-    findAuthRecordByToken: token => { if (token !== 'alice-token') throw new Error('Invalid auth'); return { id: 'alice', isSuperuser: () => false, getBool: () => false }; },
-    runInTransaction: fn => {
-      if (depth) return fn(app);
-      database.exec('BEGIN'); depth++;
-      try { const result = fn(app); database.exec('COMMIT'); return result; } catch (error) { database.exec('ROLLBACK'); throw error; } finally { depth--; }
-    },
-    save: item => {
-      if (item.fields) {
-        item.id = item.name;
-        const fields = item.fields.map(field => {
-          const relation = field.type === 'relation' ? ' REFERENCES ' + field.collectionId + '(id)' + (field.cascadeDelete ? ' ON DELETE CASCADE' : '') : '';
-          return field.name + ' ' + (['number', 'bool'].includes(field.type) ? 'INTEGER DEFAULT 0' : 'TEXT DEFAULT \'\'') + relation;
-        });
-        database.exec('CREATE TABLE ' + item.name + '(id TEXT PRIMARY KEY,' + fields.join(',') + ')');
-        for (const index of item.indexes || []) database.exec(index);
-        collections.set(item.name, item);
-        return;
-      }
-      if (!item.id) item.id = String(++sequence).padStart(15, '0');
-      item.data.id = item.id;
-      const validFields = new Set(item.collection.fields.map(field => field.name).concat('id'));
-      const entries = Object.entries(item.data).filter(([key]) => validFields.has(key));
-      const fields = entries.map(([key]) => key);
-      database.prepare('INSERT INTO ' + item.collection.name + '(' + fields.join(',') + ') VALUES (' + fields.map(() => '?').join(',') + ') ON CONFLICT(id) DO UPDATE SET ' + fields.map(key => key + '=excluded.' + key).join(','))
-        .run(...entries.map(([, value]) => typeof value === 'boolean' ? Number(value) : value));
-    },
-    delete: item => {
-      if (item.fields) { database.exec('DROP TABLE ' + item.name); collections.delete(item.name); return; }
-      database.prepare('DELETE FROM ' + item.collection.name + ' WHERE id=?').run(item.id);
-    },
-    db: () => ({ newQuery: sql => {
-      const bound = params => ({
-        one: result => Object.assign(result, query(sql, params)),
-        all: rows => { for (const data of query(sql, params, true)) rows.push(Object.assign(new global.DynamicModel({}), data)); },
-        execute: () => { const { prepared, bound: values } = statement(sql, params); return prepared.run(values); },
-      });
-      return Object.assign(bound({}), { bind: bound });
-    } }),
-    settings: () => ({ meta: { appURL: 'https://replay.test/' } }),
-    recordQuery: name => {
-      let predicate = { sql: '1=1', params: {} }; let order; let limit; let offset;
-      const result = {
-        andWhere: value => { predicate = value; return result; },
-        orderBy: (...values) => { order = values.join(','); return result; },
-        limit: value => { limit = value; return result; },
-        offset: value => { offset = value; return result; },
-        all: destination => {
-          for (const data of query('SELECT * FROM ' + name + ' WHERE ' + predicate.sql + ' ORDER BY ' + order + ' LIMIT ' + limit + ' OFFSET ' + offset, predicate.params, true)) destination.push(new Row(collections.get(name), data));
-        },
-      };
-      return result;
-    },
-  };
-  global.Record = Row;
-  global.DynamicModel = function (value) { Object.assign(this, value); };
-  global.arrayOf = () => [];
-  global.$dbx = { exp: (sql, params) => ({ sql, params }) };
-  global.$security = { sha256: hash, equal: (a, b) => a === b, randomString: length => String(++tokens).padStart(length, 'r') };
-  global.$os = { getenv: () => '' };
-  global.readerToString = value => value;
-  const webhooks = [];
-  let webhookStatus = 200;
-  global.$http = { send: request => { webhooks.push({ ...request, body: JSON.parse(request.body) }); if (webhookStatus instanceof Error) throw webhookStatus; return { statusCode: webhookStatus }; } };
-  function migrate(file) {
-    let up;
-    vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../pb_migrations', file), 'utf8'), {
-      migrate: value => { up = value; }, Collection: function (value) { Object.assign(this, value); }, Record: Row, console,
-    });
-    up(app);
-  }
-  migrate('1795600000_replay.js');
-  migrate('1795600002_observability.js');
-  const event = (body, queryValues, id, authenticated = true) => ({
-    app, hasSuperuserAuth: () => authenticated, realIP: () => '127.0.0.1',
-    request: { body: JSON.stringify(body || {}), pathValue: () => id || '', url: { query: () => ({ get: key => (queryValues || {})[key] || '' }) } },
-  });
-  const metadata = { deviceId: 'device', accountId: 'alice', authToken: 'alice-token', platform: 'web', appVersion: '1.0' };
-  function enable(value) { return observability.saveSettings(event({ errors_enabled: true, logs_enabled: true, ...value })); }
-  function token() { return observability.publicConfig(event(metadata)).token; }
-  return {
-    app, event, metadata, enable, token, database, collections, records, store, webhooks,
-    webhookAnswers: value => { webhookStatus = value; }, close: () => database.close(),
-  };
-}
-
-function exception(id, patch) {
-  return { id, timestamp: now, type: 'TypeError', message: 'Cannot load item 42', stack: 'TypeError: Cannot load item 42\n    at render (https://app.test/app.js:12:2)', service: 'client', ...patch };
-}
+const { fixture, exception, now } = require('./helpers/observability-fixture.cjs');
 
 test('capture settings are independent, default off, and corrupt settings fail closed', () => {
   const f = fixture();
@@ -149,6 +22,77 @@ test('capture settings are independent, default off, and corrupt settings fail c
   row.set('value', '{broken'); f.app.save(row);
   assert.deepEqual(observability.config(f.app), core.DEFAULTS);
   for (const patch of [{ errors_enabled: 'true' }, { logs_retention_days: 0 }, { errors_retention_days: 366 }, { daily_limit_mb: 0 }]) assert.throws(() => core.settings({ ...core.DEFAULTS, ...patch }), { status: 400 });
+  f.close();
+});
+
+test('rate settings have bounded defaults and survive saves from older dashboards', () => {
+  const f = fixture();
+  const keys = ['sessions_per_device_hour', 'sessions_per_ip_hour', 'sessions_per_hour', 'config_requests_per_ip_minute', 'upload_requests_per_ip_minute', 'upload_mb_per_ip_hour'];
+  const older = { ...core.DEFAULTS };
+  for (const key of keys) delete older[key];
+  assert.deepEqual(core.settings(older), core.DEFAULTS);
+  for (const key of keys) {
+    const maximum = key === 'upload_mb_per_ip_hour' ? 1048576 : 1000000;
+    for (const value of [0, -1, 1.5, null, '10', maximum + 1]) {
+      assert.throws(() => observability.saveSettings(f.event({ [key]: value })), { status: 400, message: 'Invalid ' + key });
+    }
+    assert.equal(observability.saveSettings(f.event({ [key]: maximum }))[key], maximum);
+  }
+  const saved = observability.saveSettings(f.event({ logs_enabled: true }));
+  for (const key of keys) assert.equal(saved[key], key === 'upload_mb_per_ip_hour' ? 1048576 : 1000000);
+  const row = f.app.findFirstRecordByData('replay_settings', 'key', 'observability');
+  row.set('value', JSON.stringify({ ...saved, errors_enabled: 'invalid' })); f.app.save(row);
+  assert.equal(observability.config(f.app).errors_enabled, false);
+  for (const key of keys) assert.equal(observability.config(f.app)[key], saved[key]);
+  f.close();
+});
+
+test('session limits apply per device, per IP and globally, and a renewal does not consume one', () => {
+  for (const scope of ['device', 'ip', 'all']) {
+    const f = fixture();
+    const key = { device: 'sessions_per_device_hour', ip: 'sessions_per_ip_hour', all: 'sessions_per_hour' }[scope];
+    f.enable({ [key]: 2 });
+    const start = index => {
+      const e = f.event({ ...f.metadata, deviceId: scope === 'device' ? 'same-device' : 'device-' + index });
+      if (scope === 'all') e.realIP = () => '10.0.0.' + index;
+      return observability.publicConfig(e);
+    };
+    const first = start(1); start(2);
+    assert.throws(() => start(3), { status: 429, message: 'Too many observability sessions' }, scope);
+    const refresh = f.event({ ...f.metadata, deviceId: scope === 'device' ? 'same-device' : 'device-1', token: first.token });
+    if (scope === 'all') refresh.realIP = () => '10.0.0.1';
+    assert.equal(observability.publicConfig(refresh).token, first.token);
+    observability.saveSettings(f.event({ [key]: 3 }));
+    assert.ok(start(3).token);
+    f.close();
+  }
+});
+
+test('configuration and each upload kind use their configured request rates immediately', () => {
+  const f = fixture(); f.enable({ config_requests_per_ip_minute: 2, upload_requests_per_ip_minute: 2 });
+  const token = f.token();
+  observability.publicConfig(f.event({ ...f.metadata, token }));
+  assert.throws(() => observability.publicConfig(f.event({ ...f.metadata, token })), { status: 429, message: 'Too many observability requests' });
+  const logs = id => observability.logsUpload(f.event({ token, events: [{ id, timestamp: now, message: 'hello' }] }));
+  const errors = id => observability.errors(f.event({ token, events: [exception(id)] }));
+  logs('l1'); logs('l2'); errors('e1'); errors('e2');
+  for (const upload of [logs, errors]) assert.throws(() => upload('third'), { status: 429, message: 'Too many observability requests' });
+  observability.saveSettings(f.event({ config_requests_per_ip_minute: 3, upload_requests_per_ip_minute: 3 }));
+  assert.equal(observability.publicConfig(f.event({ ...f.metadata, token })).token, token);
+  assert.equal(logs('l3').accepted, 1);
+  assert.equal(errors('e3').accepted, 1);
+  f.close();
+});
+
+test('the configured per-IP upload byte limit is shared by errors and logs', () => {
+  const f = fixture(); f.enable({ upload_mb_per_ip_hour: 1 }); const token = f.token();
+  f.store.set('observability:bytes', JSON.stringify({ hour: Math.floor(Date.now() / 3600000), keys: { [hash('127.0.0.1')]: 1024 * 1024 - 100 } }));
+  const log = { id: 'limited', timestamp: now, message: 'x'.repeat(200) };
+  assert.throws(() => observability.logsUpload(f.event({ token, events: [log] })), { status: 429, message: 'Observability upload budget reached' });
+  assert.throws(() => observability.errors(f.event({ token, events: [exception('limited')] })), { status: 429, message: 'Observability upload budget reached' });
+  observability.saveSettings(f.event({ upload_mb_per_ip_hour: 2 }));
+  assert.equal(observability.logsUpload(f.event({ token, events: [log] })).accepted, 1);
+  assert.equal(observability.errors(f.event({ token, events: [exception('limited')] })).accepted, 1);
   f.close();
 });
 
@@ -318,12 +262,12 @@ test('daily budgets use durable bytes, retries are free, alerts can be disabled,
   const stored = f.records('replay_errors')[0]; stored.set('byteSize', 1024 * 1024); f.app.save(stored);
   // The sum is cached for a minute, so a change made behind its back is only seen after that.
   assert.equal(observability.errors(f.event({ token, events: [exception('cached')] })).accepted, 1);
-  f.store.delete('observability:daily-bytes');
+  f.clearDailyBudget();
   assert.equal(observability.errors(f.event({ token, events: [exception('first')] })).duplicates, 1);
   assert.throws(() => observability.errors(f.event({ token, events: [exception('blocked')] })), { status: 429 });
   assert.equal(f.records('replay_errors').length, 2);
   f.records('replay_errors', "eventId = 'cached'").forEach(row => f.app.delete(row));
-  f.store.delete('observability:daily-bytes');
+  f.clearDailyBudget();
   f.enable({ daily_limit_mb: 64 });
   observability.logsUpload(f.event({ token, events: [{ id: 'old', timestamp: now - 2 * 86400000, message: 'Expired' }] }));
   const log = f.records('replay_logs')[0]; log.set('receivedAt', now - 2 * 86400000); f.app.save(log);
@@ -348,6 +292,80 @@ test('stored byte accounting includes Unicode summaries and alerts rather than a
   const minimum = core.bytes(JSON.stringify({ message })) + core.bytes(JSON.stringify(issue)) + core.bytes(JSON.stringify(alert));
   assert.ok(row.getInt('byteSize') >= minimum);
   assert.equal(core.bytes(message), 3600);
+  f.close();
+});
+
+test('daily budget admission stays serialized when another upload follows a commit immediately', () => {
+  const f = fixture(); f.enable({ alerts_enabled: false, daily_limit_mb: 1 }); const token = f.token();
+  const upload = id => observability.logsUpload(f.event({ token, events: [{ id, timestamp: now, message: 'hello' }] }));
+  upload('logseed');
+  const seed = f.records('replay_logs')[0];
+  const limit = 1024 * 1024;
+  seed.set('byteSize', limit - Math.floor(seed.getInt('byteSize') * 1.5)); f.app.save(seed);
+  f.clearDailyBudget();
+  const transaction = f.app.runInTransaction;
+  let intercept = true;
+  let secondError;
+  f.app.runInTransaction = callback => {
+    const result = transaction(callback);
+    if (intercept) {
+      intercept = false;
+      try { upload('upload2'); } catch (error) { secondError = error; }
+    }
+    return result;
+  };
+  assert.equal(upload('upload1').accepted, 1);
+  assert.equal(secondError.status, 429);
+  assert.equal(secondError.message, 'Observability storage budget reached');
+  assert.equal(f.records('replay_logs').length, 2);
+  const durable = f.records('replay_logs').reduce((sum, row) => sum + row.getInt('byteSize'), 0);
+  assert.equal(f.dailyBudget().bytes, durable);
+  assert.ok(durable <= limit);
+  assert.equal(f.store.has('observability:daily-bytes'), false);
+  f.close();
+});
+
+test('failed transactions roll back events and the daily counter, including its first initialization', () => {
+  for (const seeded of [false, true]) {
+    const f = fixture(); f.enable(); const token = f.token();
+    if (seeded) observability.errors(f.event({ token, events: [exception('seed')] }));
+    const before = f.dailyBudget();
+    const transaction = f.app.runInTransaction;
+    f.app.runInTransaction = callback => transaction(tx => {
+      callback(tx);
+      throw new Error('Injected commit failure');
+    });
+    assert.throws(() => observability.errors(f.event({ token, events: [exception('rollback-1'), exception('rollback-2')] })), /Injected commit failure/);
+    f.app.runInTransaction = transaction;
+    assert.deepEqual(f.dailyBudget(), before);
+    assert.equal(f.records('replay_errors').length, seeded ? 1 : 0);
+    assert.equal(f.records('replay_issues').length, seeded ? 1 : 0);
+    assert.equal(f.records('replay_alerts').length, seeded ? 1 : 0);
+    assert.equal(f.store.has('observability:daily-bytes'), false);
+    assert.equal(observability.errors(f.event({ token, events: [exception('rollback-1'), exception('rollback-2')] })).accepted, 2);
+    assert.equal(f.dailyBudget().bytes, f.records('replay_errors').reduce((sum, row) => sum + row.getInt('byteSize'), 0));
+    f.close();
+  }
+});
+
+test('daily accounting refreshes its SQL sum once a minute and persists intervening admissions', () => {
+  const f = fixture(); f.enable(); const token = f.token();
+  const database = f.app.db;
+  let sums = 0;
+  f.app.db = () => {
+    const builder = database();
+    const newQuery = builder.newQuery;
+    builder.newQuery = sql => { if (sql.includes('SUM(byteSize)')) sums++; return newQuery(sql); };
+    return builder;
+  };
+  const upload = id => observability.logsUpload(f.event({ token, events: [{ id, timestamp: now, message: 'hello' }] }));
+  upload('first'); upload('second');
+  assert.equal(sums, 1);
+  const budget = f.app.findFirstRecordByData('replay_settings', 'key', 'observability:daily-bytes');
+  budget.set('value', JSON.stringify({ ...f.dailyBudget(), at: Date.now() - 60001 })); f.app.save(budget);
+  upload('third');
+  assert.equal(sums, 2);
+  assert.equal(f.dailyBudget().bytes, f.records('replay_logs').reduce((sum, row) => sum + row.getInt('byteSize'), 0));
   f.close();
 });
 

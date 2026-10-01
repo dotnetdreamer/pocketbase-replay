@@ -13,7 +13,7 @@ button:hover { background: #326399; } button:disabled { opacity: .4; cursor: def
 button.danger { background: #7b2d36; } button.danger:hover { background: #9a3a45; }
 .toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 10; padding: 10px 18px; border-radius: 8px; background: #1f7a4d; color: #fff; box-shadow: 0 6px 20px rgba(0, 0, 0, .35); }
 .toast[hidden] { display: none; }
-input:focus, button:focus-visible, select:focus, textarea:focus { outline: 2px solid #73b7ff; outline-offset: 2px; }
+input:focus, button:focus-visible, select:focus, textarea:focus, summary:focus-visible { outline: 2px solid #73b7ff; outline-offset: 2px; }
 .card { background: #18212f; border: 1px solid #2e3c50; border-radius: 12px; padding: 20px; margin: 20px 0; }
 .login { max-width: 400px; margin: 48px auto; display: grid; gap: 16px; }
 .header-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
@@ -31,7 +31,7 @@ button.secondary { background: transparent; } button.secondary:hover { backgroun
 #settings fieldset, #observability-settings fieldset { display: grid; gap: 12px; margin: 0; padding: 0; border: 0; min-width: 0; }
 #settings fieldset + fieldset, #observability-settings fieldset + fieldset { border-top: 1px solid #2e3c50; padding-top: 16px; }
 #settings legend, #observability-settings legend { float: left; width: 100%; padding: 0; margin-bottom: 4px; font-size: 12px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: #8fa3bf; }
-#settings .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+#settings .row, #observability-settings .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 #settings small, #observability-settings small { font-size: 12px; color: #8fa3bf; }
 #settings textarea { resize: vertical; }
 #settings textarea.code { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 13px; }
@@ -41,6 +41,10 @@ button.secondary { background: transparent; } button.secondary:hover { backgroun
 #settings .check strong, #observability-settings .check strong { font-size: 14px; font-weight: 600; color: #edf2f7; }
 #settings .hint, #observability-settings .hint { margin: 0; font-size: 13px; }
 #settings .dialog-actions, #observability-settings .dialog-actions { margin-top: 0; }
+.settings-advanced { border-top: 1px solid #2e3c50; padding-top: 14px; }
+.settings-advanced summary { font-size: 14px; cursor: pointer; }
+#observability-settings .settings-advanced fieldset { margin-top: 14px; }
+#observability-settings .settings-advanced .hint { margin-top: 12px; }
 #status { min-height: 24px; margin: 6px 0 0; } #status.error, #gaps { color: #ffc38a; }
 
 /* Sessions on the left, the open recording on the right. */
@@ -89,11 +93,13 @@ button.secondary { background: transparent; } button.secondary:hover { backgroun
 .telemetry-workspace { display: grid; flex: 1; min-height: 0; grid-template-columns: minmax(300px, 430px) minmax(0, 1fr); gap: 20px; }
 .telemetry-workspace > .card { margin: 0; min-width: 0; min-height: 0; }
 .telemetry-panel { display: flex; flex-direction: column; padding: 16px; }
-.telemetry-filters { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
-.telemetry-filters .wide, .telemetry-filters > button { grid-column: 1 / -1; }
+.telemetry-filters, .telemetry-filter-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.telemetry-filters .wide, .telemetry-filters > button, .filter-options { grid-column: 1 / -1; }
 .telemetry-filters label { font-size: 12px; gap: 3px; }
-.telemetry-filters input, .telemetry-filters select { font-size: 14px; padding: 6px 9px; }
+.telemetry-filters input, .telemetry-filters select { width: 100%; font-size: 14px; padding: 6px 9px; }
 .telemetry-filters > button { padding: 7px 12px; }
+.filter-options summary { font-size: 13px; color: #aebdd1; cursor: pointer; padding: 4px 0; }
+.telemetry-filter-fields { padding-top: 8px; }
 .telemetry-scroll { overflow-y: auto; flex: 1; min-height: 100px; }
 .telemetry-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
 .telemetry-row { border: 1px solid #2e3c50; border-radius: 9px; background: #151e2c; min-width: 0; }
@@ -107,6 +113,7 @@ button.secondary { background: transparent; } button.secondary:hover { backgroun
 .badge[data-level='error'], .badge[data-level='fatal'] { border-color: #8d4752; color: #ffb3bd; }
 .list-state { font-size: 13px; margin: 12px 0; }
 .list-state:empty { margin: 0; }
+.list-state.error { color: #ffc38a; }
 .telemetry-scroll > button { width: 100%; margin-top: 10px; }
 .telemetry-detail { overflow-y: auto; display: flex; flex-direction: column; }
 .telemetry-detail h2 { overflow-wrap: anywhere; }
@@ -134,9 +141,8 @@ button.secondary { background: transparent; } button.secondary:hover { backgroun
 .webhook-test { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; font-size: 13px; color: #aebdd1; }
 .webhook-test button { font-size: 13px; padding: 6px 10px; }
 /* Log volume. Colours checked for colour-blind separation on the #18212f card: errors sit on the baseline. */
-.log-volume { position: relative; margin: 0 0 16px; padding-bottom: 14px; border-bottom: 1px solid #2e3c50; transition: opacity .2s;
+.log-volume { position: relative; margin: 0 0 16px; padding-bottom: 14px; border-bottom: 1px solid #2e3c50;
   --volume-errors: #d55181; --volume-warnings: #c98500; --volume-info: #3987e5; --volume-debug: #199e70; }
-.log-volume.refreshing { opacity: .5; }
 .volume-heading { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 4px 10px; }
 .volume-heading h3 { font-size: 13px; margin: 0; }
 .volume-heading p { font-size: 12px; margin: 0; color: #8fa3bf; }
@@ -170,10 +176,8 @@ button.secondary { background: transparent; } button.secondary:hover { backgroun
   body { display: flex; flex-direction: column; height: 100vh; }
   #dashboard { flex: 1; min-height: 0; display: flex; flex-direction: column; }
   .workspace { flex: 1; min-height: 520px; }
-  .telemetry-workspace { min-height: 600px; }
-  /* Filters, alerts and the list scroll together, so a short window never hides the list below the card. */
+  .telemetry-workspace { min-height: 0; }
   .telemetry-panel { overflow-y: auto; }
-  .telemetry-scroll { flex: none; overflow: visible; min-height: 0; }
 }
 @media (max-width: 900px) {
   .workspace { grid-template-columns: minmax(0, 1fr); grid-template-rows: none; }
@@ -184,4 +188,4 @@ button.secondary { background: transparent; } button.secondary:hover { backgroun
   .telemetry-detail { overflow: visible; }
 }
 @media (max-width: 850px) { body { padding: 12px; } .card { padding: 14px; } }
-@media (max-width: 480px) { header { align-items: flex-start; flex-direction: column; gap: 10px; } .header-actions { justify-content: flex-start; } .header-actions button { font-size: 12px; padding: 6px 8px; } #settings .row { grid-template-columns: 1fr; } .filters label, .filters label:nth-of-type(n+4) { grid-column: 1 / -1; } h1 { font-size: 23px; } .context-grid { grid-template-columns: minmax(0, 1fr); gap: 2px; } .context-grid dd { margin-bottom: 8px; } .context-grid button { display: block; margin: 6px 0 0; } }
+@media (max-width: 480px) { header { align-items: flex-start; flex-direction: column; gap: 10px; } .header-actions { justify-content: flex-start; } .header-actions button { font-size: 12px; padding: 6px 8px; } #settings .row, #observability-settings .row { grid-template-columns: 1fr; } .filters label, .filters label:nth-of-type(n+4) { grid-column: 1 / -1; } h1 { font-size: 23px; } .context-grid { grid-template-columns: minmax(0, 1fr); gap: 2px; } .context-grid dd { margin-bottom: 8px; } .context-grid button { display: block; margin: 6px 0 0; } }

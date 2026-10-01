@@ -1,0 +1,33 @@
+appId: io.pbreplay.verification
+name: Android errors and logs with native lifecycle
+tags:
+  - observability
+  - android
+  - local
+---
+- launchApp:
+    stopApp: false
+- extendedWaitUntil:
+    visible: ".*STARTUP PASS.*"
+    timeout: 30000
+- tapOn: "Capture JS stack"
+- extendedWaitUntil:
+    visible: ".*STACK PASS.*"
+    timeout: 20000
+- tapOn: "Capture DOMException"
+- assertVisible: ".*DOMEXCEPTION PASS.*"
+- tapOn: "Capture grouped errors"
+- assertVisible: ".*GROUPING PASS.*"
+- tapOn: "Start replay only"
+- assertVisible: ".*REPLAY START PASS.*"
+- tapOn: "Arm background check"
+- assertVisible: ".*BACKGROUND ARMED.*"
+- pressKey: Home
+- launchApp:
+    stopApp: false
+- extendedWaitUntil:
+    visible: ".*BACKGROUND PASS.*"
+    timeout: 20000
+- assertVisible: ".*STARTUP PASS.*"
+- assertVisible: ".*STACK PASS.*"
+- takeScreenshot: observability-android

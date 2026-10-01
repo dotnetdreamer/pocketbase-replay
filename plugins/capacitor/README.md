@@ -181,8 +181,9 @@ Stops only errors and logs. Recording keeps running
 captureException(options: CaptureExceptionOptions) => Promise<{ id: string | null }>
 ```
 
-Queue an exception. Supply `error` and optional `attributes`, `handled`, and
-`level` (`error` or `fatal`). Requires the client's `errors` option and the
+Queue an exception. Supply `error` and optional `attributes`, `groupingKey`,
+`handled`, and `level` (`error` or `fatal`). A stable grouping key joins known
+failures within the same service across builds and platforms. Requires the client's `errors` option and the
 server's **Collect errors** switch
 
 ### captureLog(options)
@@ -216,7 +217,7 @@ console capture. It does not collect native process crashes or device system log
 | --- | --- |
 | `StartOptions` | `ReplayOptions` plus `errors`, `logs`, `service` and `beforeSend` |
 | `GetMetricsResult` | `{ metrics: ReplayMetrics \| null }` |
-| `CaptureExceptionOptions` | `{ error, attributes?, handled?, level? }` |
+| `CaptureExceptionOptions` | `{ error, attributes?, groupingKey?, handled?, level? }` |
 | `CaptureLogOptions` | `{ level, message, attributes? }` |
 | `GetObservabilityMetricsResult` | `{ metrics: ObservabilityMetrics \| null }` |
 

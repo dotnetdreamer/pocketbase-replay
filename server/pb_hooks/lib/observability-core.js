@@ -15,6 +15,8 @@ const LIMITS = {
 const DEFAULTS = {
   errors_enabled: false, logs_enabled: false, alerts_enabled: true,
   errors_retention_days: 30, logs_retention_days: 14, daily_limit_mb: 64, alert_webhook_url: '',
+  sessions_per_device_hour: 30, sessions_per_ip_hour: 120, sessions_per_hour: 20000,
+  config_requests_per_ip_minute: 120, upload_requests_per_ip_minute: 120, upload_mb_per_ip_hour: 8,
 };
 const LEVELS = ['trace', 'debug', 'info', 'warn', 'error', 'fatal'];
 const PRIVATE_KEY = /password|passwd|secret|token|authorization|cookie|email|phone|credit.?card|api.?key/i;
@@ -37,6 +39,10 @@ function settings(value) {
   for (const key of ['errors_retention_days', 'logs_retention_days']) result[key] = replay.integer(value[key], key, 1, 365);
   result.daily_limit_mb = replay.integer(value.daily_limit_mb, 'daily_limit_mb', 1, 1048576);
   result.alert_webhook_url = webhook(value.alert_webhook_url);
+  for (const key of ['sessions_per_device_hour', 'sessions_per_ip_hour', 'sessions_per_hour', 'config_requests_per_ip_minute', 'upload_requests_per_ip_minute']) {
+    result[key] = replay.integer(value[key] === undefined ? DEFAULTS[key] : value[key], key, 1, 1000000);
+  }
+  result.upload_mb_per_ip_hour = replay.integer(value.upload_mb_per_ip_hour === undefined ? DEFAULTS.upload_mb_per_ip_hour : value.upload_mb_per_ip_hour, 'upload_mb_per_ip_hour', 1, 1048576);
   return result;
 }
 
@@ -125,6 +131,7 @@ function event(value, kind, now) {
   if (!LEVELS.includes(level) || (kind === 'error' && !['error', 'fatal'].includes(level))) replay.fail(400, 'Invalid level');
   result.level = level;
   if (kind === 'error') {
+    if (typeof result.attributes.groupingKey === 'string') result.attributes.groupingKey = label(result.attributes.groupingKey, 128).trim();
     result.name = label(replay.text(value.name === undefined ? value.type : value.name, 'error name', 128, false) || 'Error', 128);
     result.stack = content(value.stack, 'stack', 8192, false);
     if (value.handled !== undefined && typeof value.handled !== 'boolean') replay.fail(400, 'Invalid handled');
@@ -174,6 +181,8 @@ function frames(stack) {
 }
 
 function fingerprint(value, hash) {
+  const groupingKey = value.attributes && value.attributes.groupingKey;
+  if (typeof groupingKey === 'string' && groupingKey.trim()) return hash(JSON.stringify([value.service, 'groupingKey', groupingKey.trim()]));
   const top = frames(value.stack);
   // Minified frames all read "?@index.js" and cannot tell two errors apart, so the message decides instead.
   const named = top.filter(function (frame) { return frame.charAt(0) !== '?'; }).length;

@@ -44,6 +44,21 @@ function fixture(overrides: Partial<ObservabilityOptions> = {}) {
   };
 }
 
+test('explicit grouping keys survive sanitization, crowded attributes and beforeSend', async () => {
+  const f = fixture({ sensitiveText: () => ['private-customer'], beforeSend: event => ({ ...event, message: 'Updated message' }) });
+  const client = createObservability(f.options, f.runtime);
+  await client.refresh();
+  const attributes = Object.fromEntries(Array.from({ length: 25 }, (_, i) => ['field' + i, i]));
+  client.captureException(new Error('Checkout failed'), { groupingKey: ' checkout-private-customer ', attributes });
+  await client.flush();
+  const sent = f.posts.find(post => post.url.endsWith('/errors'))!.body.events[0];
+  assert.equal(sent.attributes.groupingKey, 'checkout-[redacted]');
+  assert.equal(sent.message, 'Updated message');
+  assert.equal(Object.keys(sent.attributes).length <= 20, true);
+  assert.equal(server.batch(f.posts.find(post => post.url.endsWith('/errors'))!.body, 'error', f.now()).events[0].attributes.groupingKey, 'checkout-[redacted]');
+  client.stop();
+});
+
 test('both features stay off without local opt-ins or a server opt-in', async () => {
   const off = fixture({ errors: undefined, logs: undefined });
   const client = createObservability(off.options, off.runtime);
@@ -309,6 +324,22 @@ test('an oversized entry loses attributes and the end of its stack instead of be
   assert.ok(sent.events[0].stack.length < 8000 && sent.events[0].stack.length > 1000);
   assert.ok(sent.events[0].message.startsWith('خرابی'));
   server.batch(sent, 'error', f.now()); client.stop();
+});
+
+test('oversized exceptions preserve explicit grouping and bound keys from beforeSend', async () => {
+  const f = fixture({ beforeSend: event => ({ ...event, attributes: { ...event.attributes, groupingKey: 'stable-' + 'x'.repeat(200) } }) });
+  const client = createObservability(f.options, f.runtime);
+  await client.refresh();
+  const error = new Error('Oversized grouping probe');
+  error.stack = 'at ' + '渲'.repeat(7970);
+  client.captureException(error, { groupingKey: 'known-error', attributes: { note: 'ب'.repeat(1000) } });
+  await client.flush();
+  const sent = f.posts.find(post => post.url.endsWith('/errors'))!.body;
+  assert.equal(sent.events[0].attributes.groupingKey, ('stable-' + 'x'.repeat(200)).slice(0, 128));
+  assert.equal(sent.events[0].attributes.truncated, true);
+  assert.ok(Buffer.byteLength(JSON.stringify(sent.events[0])) <= OBSERVABILITY_LIMITS.eventBytes);
+  server.batch(sent, 'error', f.now());
+  client.stop();
 });
 
 test('V8 stacks and DOMException names and messages are captured, though both are getters', async () => {

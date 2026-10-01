@@ -2,8 +2,6 @@ const base = require('./replay-core.js');
 const core = require('./observability-core.js');
 const replay = require('./replay.js');
 
-// New upload credentials per hour. A client reuses and extends its credential, so these only count fresh starts.
-const CONTEXTS = { device: 30, ip: 120, all: 20000 };
 const VOLUME_STEPS = [60000, 300000, 900000, 1800000, 3600000, 10800000, 21600000, 43200000, 86400000, 604800000];
 
 function readBody(e) {
@@ -25,8 +23,8 @@ function config(app) {
   } catch (_) {
     // Collection stays off; values that are still valid survive, so the next dashboard save does not wipe them.
     const fallback = Object.assign({}, core.DEFAULTS);
-    for (const key of ['errors_retention_days', 'logs_retention_days', 'daily_limit_mb']) {
-      try { fallback[key] = base.integer(value[key], key, 1, key === 'daily_limit_mb' ? 1048576 : 365); } catch (_) {}
+    for (const key of ['errors_retention_days', 'logs_retention_days', 'daily_limit_mb', 'sessions_per_device_hour', 'sessions_per_ip_hour', 'sessions_per_hour', 'config_requests_per_ip_minute', 'upload_requests_per_ip_minute', 'upload_mb_per_ip_hour']) {
+      try { fallback[key] = core.settings(Object.assign({}, core.DEFAULTS, { [key]: value[key] }))[key]; } catch (_) {}
     }
     try { fallback.alert_webhook_url = core.webhook(value.alert_webhook_url); } catch (_) {}
     return fallback;
@@ -53,7 +51,7 @@ function rate(e, kind, max) {
   let state = load(store, 'observability:requests');
   if (state.minute !== minute || !state.keys) state = { minute: minute, keys: {} };
   const key = kind + ':' + $security.sha256(e.realIP());
-  // A full map stops counting new IPs, as replay's does; PocketBase's own per-IP limiter still applies.
+  // A full map stops custom counting for new IPs until the next minute.
   if (!state.keys[key] && Object.keys(state.keys).length >= 4096) return;
   const next = (state.keys[key] || 0) + 1;
   if (next > max) base.fail(429, 'Too many observability requests');
@@ -62,7 +60,7 @@ function rate(e, kind, max) {
 }
 
 // Checked before the batch and charged after it, so refused uploads and repeated entries cost nothing.
-function ipBudget(e, bytes) {
+function ipBudget(e, bytes, maxBytes) {
   const store = e.app.store();
   const key = $security.sha256(e.realIP());
   function read() {
@@ -73,7 +71,7 @@ function ipBudget(e, bytes) {
   const state = read();
   // A full map stops per-IP counting for the hour; the daily budget still caps the disk.
   if (!state.keys[key] && Object.keys(state.keys).length >= 4096) return function () {};
-  if ((state.keys[key] || 0) + bytes > core.LIMITS.ipBytesPerHour) base.fail(429, 'Observability upload budget reached');
+  if ((state.keys[key] || 0) + bytes > maxBytes) base.fail(429, 'Observability upload budget reached');
   return function (spent) {
     const next = read();
     next.keys[key] = (next.keys[key] || 0) + spent;
@@ -81,25 +79,32 @@ function ipBudget(e, bytes) {
   };
 }
 
-// Summed with SQL at most once a minute, then counted up in the store between sums.
-function dailyBytes(e, tx, now) {
-  const store = e.app.store();
-  const cached = load(store, 'observability:daily-bytes');
-  if (cached.at > now - 60000 && cached.at <= now && Number.isFinite(cached.bytes)) return cached.bytes;
+// Keep the counter in the upload transaction, so the next upload sees it only after a successful commit.
+function dailyBytes(tx, now) {
+  let row;
+  let cached;
+  try {
+    row = tx.findFirstRecordByData('replay_settings', 'key', 'observability:daily-bytes');
+    cached = JSON.parse(row.getString('value'));
+  } catch (_) {}
+  if (cached && cached.at > now - 60000 && cached.at <= now && Number.isSafeInteger(cached.bytes) && cached.bytes >= 0) {
+    return { row: row, at: cached.at, bytes: cached.bytes, refresh: false };
+  }
   const result = new DynamicModel({ total: -0 });
   tx.db().newQuery('SELECT COALESCE((SELECT SUM(byteSize) FROM replay_errors WHERE receivedAt > {:since}), 0) + COALESCE((SELECT SUM(byteSize) FROM replay_logs WHERE receivedAt > {:since}), 0) AS total')
     .bind({ since: now - 86400000 }).one(result);
   const bytes = Number(result.total) || 0;
-  store.set('observability:daily-bytes', JSON.stringify({ at: now, bytes: bytes }));
-  return bytes;
+  if (!row) {
+    row = new Record(tx.findCollectionByNameOrId('replay_settings'));
+    row.set('key', 'observability:daily-bytes');
+  }
+  return { row: row, at: now, bytes: bytes, refresh: true };
 }
 
-function addDailyBytes(e, bytes) {
-  const store = e.app.store();
-  const cached = load(store, 'observability:daily-bytes');
-  if (!Number.isFinite(cached.bytes)) return;
-  cached.bytes += bytes;
-  store.set('observability:daily-bytes', JSON.stringify(cached));
+function addDailyBytes(tx, cached, bytes) {
+  if (!cached.refresh && !bytes) return;
+  cached.row.set('value', JSON.stringify({ at: cached.at, bytes: cached.bytes + bytes }));
+  tx.save(cached.row);
 }
 
 function getSettings(e) { admin(e); return config(e.app); }
@@ -123,10 +128,10 @@ function saveSettings(e) {
 }
 
 function publicConfig(e) {
-  rate(e, 'config', 120);
+  const cfg = config(e.app);
+  rate(e, 'config', cfg.config_requests_per_ip_minute);
   const body = readBody(e);
   const meta = base.metadata(body);
-  const cfg = config(e.app);
   const result = {
     enabled: false, errorsEnabled: false, logsEnabled: false,
     uploadIntervalMs: core.LIMITS.uploadIntervalMs, maxBatchEvents: core.LIMITS.batchEvents,
@@ -158,9 +163,9 @@ function publicConfig(e) {
       }
     } else {
       const params = { since: now - 3600000, device: meta.deviceId, ip: $security.sha256(e.realIP()) };
-      if (count(tx, 'replay_observability_sessions', 'deviceId = {:device} AND issuedAt > {:since}', params) >= CONTEXTS.device ||
-          count(tx, 'replay_observability_sessions', 'ipHash = {:ip} AND issuedAt > {:since}', params) >= CONTEXTS.ip ||
-          count(tx, 'replay_observability_sessions', 'issuedAt > {:since}', params) >= CONTEXTS.all) base.fail(429, 'Too many observability sessions');
+      if (count(tx, 'replay_observability_sessions', 'deviceId = {:device} AND issuedAt > {:since}', params) >= latest.sessions_per_device_hour ||
+          count(tx, 'replay_observability_sessions', 'ipHash = {:ip} AND issuedAt > {:since}', params) >= latest.sessions_per_ip_hour ||
+          count(tx, 'replay_observability_sessions', 'issuedAt > {:since}', params) >= latest.sessions_per_hour) base.fail(429, 'Too many observability sessions');
       token = $security.randomString(64);
       context = new Record(tx.findCollectionByNameOrId('replay_observability_sessions'));
       context.set('tokenHash', $security.sha256(token));
@@ -204,10 +209,11 @@ function addAlert(tx, issue, kind, now, cfg) {
 }
 
 function ingestion(e, kind) {
-  rate(e, kind, 120);
+  const settings = config(e.app);
+  rate(e, kind, settings.upload_requests_per_ip_minute);
   const now = Date.now();
   const value = core.batch(readBody(e), kind, now);
-  const spend = ipBudget(e, core.bytes(JSON.stringify(value.events)));
+  const spend = ipBudget(e, core.bytes(JSON.stringify(value.events)), settings.upload_mb_per_ip_hour * 1024 * 1024);
   let accepted = 0;
   let duplicates = 0;
   let conflicts = 0;
@@ -222,7 +228,8 @@ function ingestion(e, kind) {
     if (!(kind === 'error' ? cfg.errors_enabled : cfg.logs_enabled) || replay.isForgotten(tx, context.getString('accountId'))) base.fail(403, 'Observability is disabled');
     const accountId = context.getString('accountId');
     const deviceId = context.getString('deviceId');
-    let daily = dailyBytes(e, tx, now);
+    const budget = dailyBytes(tx, Date.now());
+    let daily = budget.bytes;
     value.events.forEach(function (item) {
       const sessionToken = item.sessionToken;
       delete item.sessionToken;
@@ -288,10 +295,10 @@ function ingestion(e, kind) {
       stored += bytes;
       daily += bytes;
     });
+    addDailyBytes(tx, budget, stored);
   });
   if (accepted) {
     spend(uploaded);
-    addDailyBytes(e, stored);
   }
   return { ok: true, accepted: accepted, duplicates: duplicates, conflicts: conflicts };
 }
@@ -472,25 +479,62 @@ function acknowledge(e) {
 
 function removeAlert(e) { admin(e); e.app.delete(lookup(e, 'replay_alerts')); return { ok: true }; }
 
-// One POST per call, listing every alert. Discord reads "content"; Slack and Google Chat read "text",
-// and Google Chat refuses unknown fields. Anything else gets the text and the alerts as JSON.
-function post(app, url, items) {
+function webhookHost(url) {
+  return ((/^https?:\/\/([^/:?#]+)/i.exec(url) || [])[1] || '').toLowerCase();
+}
+
+function dashboardLink(app) {
   let dashboard = '';
   try {
     // PocketBase fills in http://localhost:8090 when no Application URL is set; nobody can follow that link.
     const address = String(app.settings().meta.appURL || '');
     if (/^https?:\/\//i.test(address) && !/^https?:\/\/(?:localhost|127\.|\[::1\])/i.test(address)) dashboard = address.replace(/\/+$/, '') + '/dash/replay';
   } catch (_) { /* No application URL, so no link. */ }
-  const lines = items.map(function (item) {
-    const kind = item.kind === 'regressed' ? 'Resolved issue returned' : item.kind === 'test' ? 'Test alert' : 'New issue';
-    return kind + ': ' + item.title.slice(0, 300);
+  return dashboard;
+}
+
+function alertLine(item) {
+  const kind = item.kind === 'regressed' ? 'Resolved issue returned' : item.kind === 'test' ? 'Test alert' : 'New issue';
+  // Do not split an emoji's surrogate pair at the title limit.
+  return kind + ': ' + item.title.slice(0, 300).replace(/[\uD800-\uDBFF]$/, '');
+}
+
+function webhookBatches(app, url, items) {
+  const host = webhookHost(url);
+  const discord = /(^|\.)discord(app)?\.com$/.test(host);
+  let dashboard = dashboardLink(app);
+  const lines = items.map(alertLine);
+  const batches = [];
+  if (discord) {
+    const longest = lines.reduce(function (length, line) { return Math.max(length, line.length); }, 0);
+    // Omit a link that cannot fit beside one complete alert.
+    if (dashboard.length + 1 + longest > 1900) dashboard = '';
+    const available = 1900 - (dashboard ? dashboard.length + 1 : 0);
+    let current = [];
+    let length = 0;
+    for (let index = 0; index < items.length; index++) {
+      const next = lines[index].length + (current.length ? 1 : 0);
+      if (current.length && length + next > available) {
+        batches.push(current);
+        current = [];
+        length = 0;
+      }
+      length += lines[index].length + (current.length ? 1 : 0);
+      current.push(items[index]);
+    }
+    if (current.length) batches.push(current);
+  } else batches.push(items);
+  return batches.map(function (batch) {
+    const text = batch.map(alertLine).concat(dashboard ? [dashboard] : []).join('\n');
+    const body = discord ? { content: text }
+      : host === 'hooks.slack.com' || host === 'chat.googleapis.com' ? { text: text }
+        : { text: text, dashboard: dashboard, alerts: batch };
+    return { items: batch, body: body };
   });
-  if (dashboard) lines.push(dashboard);
-  const text = lines.join('\n');
-  const host = ((/^https?:\/\/([^/:?#]+)/i.exec(url) || [])[1] || '').toLowerCase();
-  const body = /(^|\.)discord(app)?\.com$/.test(host) ? { content: text.slice(0, 1900) }
-    : host === 'hooks.slack.com' || host === 'chat.googleapis.com' ? { text: text }
-      : { text: text, dashboard: dashboard, alerts: items };
+}
+
+// Slack and Google Chat read "text"; Discord reads "content". Other endpoints also get the alert records.
+function post(url, body) {
   try {
     const response = $http.send({ url: url, method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), timeout: 5 });
     if (response.statusCode >= 200 && response.statusCode < 300) return true;
@@ -499,8 +543,8 @@ function post(app, url, items) {
   return false;
 }
 
-// Up to 20 waiting alerts per minute in one message. A webhook that keeps failing gives up on an alert
-// after ten tries; the dashboard still lists it.
+// Each sweep selects up to 20 alerts. Discord batches fit complete alerts and the dashboard link in 1,900 characters.
+// A failed message waits for the next sweep and gives up after ten tries; accepted messages stay sent.
 function deliver(app, cfg) {
   if (!cfg.alert_webhook_url) {
     app.db().newQuery("UPDATE replay_alerts SET delivery = 'none' WHERE delivery = 'pending'").execute();
@@ -508,12 +552,19 @@ function deliver(app, cfg) {
   }
   const rows = app.findRecordsByFilter('replay_alerts', "delivery = 'pending'", 'timestamp,id', 20, 0);
   if (!rows.length) return;
-  const sent = post(app, cfg.alert_webhook_url, rows.map(function (row) { return summary(row, 'alert'); }));
-  const ids = {};
-  const list = rows.map(function (row, index) { ids['alert' + index] = row.id; return '{:alert' + index + '}'; }).join(', ');
-  // Raw updates, because an alert can disappear with its issue while the request is out.
-  app.db().newQuery(sent ? "UPDATE replay_alerts SET delivery = 'sent' WHERE id IN (" + list + ')'
-    : "UPDATE replay_alerts SET deliveryAttempts = deliveryAttempts + 1, delivery = CASE WHEN deliveryAttempts + 1 >= 10 THEN 'failed' ELSE delivery END WHERE id IN (" + list + ')').bind(ids).execute();
+  const batches = webhookBatches(app, cfg.alert_webhook_url, rows.map(function (row) { return summary(row, 'alert'); }));
+  const deadline = Date.now() + 50000;
+  for (const batch of batches) {
+    // Leave later messages queued when delivery runs close to the next cron minute.
+    if (Date.now() >= deadline) break;
+    const sent = post(cfg.alert_webhook_url, batch.body);
+    const ids = {};
+    const list = batch.items.map(function (item, index) { ids['alert' + index] = item.id; return '{:alert' + index + '}'; }).join(', ');
+    // An alert can disappear with its issue while the request is out.
+    app.db().newQuery(sent ? "UPDATE replay_alerts SET delivery = 'sent' WHERE id IN (" + list + ')'
+      : "UPDATE replay_alerts SET deliveryAttempts = deliveryAttempts + 1, delivery = CASE WHEN deliveryAttempts + 1 >= 10 THEN 'failed' ELSE delivery END WHERE id IN (" + list + ')').bind(ids).execute();
+    if (!sent) break;
+  }
 }
 
 function testAlert(e) {
@@ -523,7 +574,7 @@ function testAlert(e) {
   const url = body.alert_webhook_url === undefined ? config(e.app).alert_webhook_url : core.webhook(body.alert_webhook_url);
   if (!url) base.fail(400, 'Enter a webhook URL first');
   const sample = { id: '', issueId: '', kind: 'test', title: 'PocketBase Replay can reach this webhook', timestamp: Date.now(), acknowledged: false, delivery: 'sent' };
-  if (!post(e.app, url, [sample])) base.fail(502, 'The webhook did not accept the test alert');
+  if (!post(url, webhookBatches(e.app, url, [sample])[0].body)) base.fail(502, 'The webhook did not accept the test alert');
   return { ok: true };
 }
 

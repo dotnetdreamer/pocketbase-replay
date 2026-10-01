@@ -7,6 +7,7 @@ export interface ErrorTrackingOptions { captureUnhandled?: boolean }
 export interface LogCaptureOptions { captureConsole?: boolean | LogLevel[] }
 export interface ExceptionContext {
   attributes?: ObservabilityAttributes;
+  groupingKey?: string;
   handled?: boolean;
   level?: 'error' | 'fatal';
 }
