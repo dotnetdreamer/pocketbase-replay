@@ -15,4 +15,10 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run build
+      - name: Verify errors and logs against PocketBase
+        run: |
+          curl -fsSL https://github.com/pocketbase/pocketbase/releases/download/v0.39.9/pocketbase_0.39.9_linux_amd64.zip -o "$RUNNER_TEMP/pb-replay.zip"
+          printf '%s  %s\n' '4c5a1aced62ebf658bfbcfeaa944c4bfa88b173dd9d598d3cab55ea63587b36b' "$RUNNER_TEMP/pb-replay.zip" | sha256sum -c -
+          unzip -q "$RUNNER_TEMP/pb-replay.zip" -d "$RUNNER_TEMP/pb-replay-bin"
+          REPLAY_PB_BIN="$RUNNER_TEMP/pb-replay-bin/pocketbase" npm run test:integration
       - run: npm pack --dry-run

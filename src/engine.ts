@@ -483,5 +483,10 @@ export function createReplay(options: ReplayOptions, runtime: ReplayRuntime): Re
     flush,
     refresh,
     getMetrics: () => ({ ...metrics, bufferedBytes: bufferBytes + pendingBytes, queuedBytes: queueBytes }),
+    getSessionContext: () => {
+      if (closed || !session || session.expiresAt <= runtime.now()) return null;
+      const value = metadata();
+      return value && identityOf(value) === identity ? { sessionId: session.sessionId, token: session.token } : null;
+    },
   };
 }

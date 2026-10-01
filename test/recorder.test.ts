@@ -123,6 +123,22 @@ function texts(chunk: ReplayChunk): string[] {
   return events(chunk).flatMap((event) => (event.data.texts as { value: string }[] | undefined ?? []).map((text) => text.value));
 }
 
+test('replay correlation returns a detached context only for the current live identity', async () => {
+  const h = harness();
+  assert.equal(h.controller.getSessionContext(), null);
+  await settle();
+  assert.deepEqual(h.controller.getSessionContext(), { sessionId: 'session-1', token: 'upload-secret' });
+  const context = h.controller.getSessionContext()!; context.token = 'changed';
+  assert.equal(h.controller.getSessionContext()!.token, 'upload-secret');
+  h.metadata({ accountId: 'signed-in-user', authToken: 'account-token' });
+  assert.equal(h.controller.getSessionContext(), null);
+  await h.controller.refresh();
+  assert.equal(h.controller.getSessionContext()!.sessionId, 'session-2');
+  h.enabled(false); await h.controller.refresh();
+  assert.equal(h.controller.getSessionContext(), null);
+  h.controller.stop(); assert.equal(h.controller.getSessionContext(), null);
+});
+
 test('disabled sampling never loads rrweb; a settings refresh starts and stops capture', async () => {
   const h = harness({ enabled: false });
   await settle();

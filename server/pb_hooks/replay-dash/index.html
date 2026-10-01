@@ -4,13 +4,13 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="referrer" content="no-referrer">
-  <title>Session replays</title>
+  <title>PocketBase Replay</title>
   <!-- Relative, so the page also works behind a proxy path such as /replay/dash/replay. -->
   <link rel="stylesheet" href="replay/style.css">
   <script type="module" src="replay/app.js"></script>
 </head>
 <body>
-  <header><div><h1>Session replays</h1><p>Watch screens, taps and dialogs</p></div><div class="header-actions"><button id="logout" hidden>Sign out</button><button id="open-settings" hidden>Recording settings</button></div></header>
+  <header><div><h1>PocketBase Replay</h1><p>Session replays, errors and logs</p></div><div class="header-actions"><button id="logout" hidden>Sign out</button><button id="open-settings" hidden>Recording settings</button><button id="open-observability-settings" hidden>Errors and logs settings</button></div></header>
   <p id="status" role="status" aria-live="polite"></p>
   <form id="login" class="card login">
     <h2>Sign in to PocketBase</h2>
@@ -19,6 +19,36 @@
     <button type="submit">Sign in</button>
   </form>
   <main id="dashboard" hidden>
+    <nav class="dashboard-tabs" role="tablist" aria-label="Replay tools">
+      <button id="sessions-tab" type="button" role="tab" aria-controls="sessions-view" aria-selected="true">Sessions</button>
+      <button id="issues-tab" type="button" role="tab" aria-controls="issues-view" aria-selected="false" tabindex="-1">Issues <span id="issues-alert-badge" class="tab-count" hidden></span></button>
+      <button id="logs-tab" type="button" role="tab" aria-controls="logs-view" aria-selected="false" tabindex="-1">Logs</button>
+    </nav>
+    <dialog id="observability-settings-dialog" class="card" aria-labelledby="observability-settings-title">
+      <h2 id="observability-settings-title">Errors and logs settings</h2>
+      <form id="observability-settings">
+        <fieldset>
+          <legend>Error tracking</legend>
+          <label class="check"><input name="errors_enabled" type="checkbox"><span><strong>Collect errors</strong><small>Capture errors and group matching occurrences into issues</small></span></label>
+          <label class="check"><input name="alerts_enabled" type="checkbox"><span><strong>Issue alerts</strong><small>Raise an alert when an issue first appears or a resolved issue returns. Alerts are listed in the Issues tab and sent to the webhook below</small></span></label>
+          <label>Alert webhook (optional)<input name="alert_webhook_url" type="url" inputmode="url" maxlength="2048" autocomplete="off" spellcheck="false" placeholder="https://hooks.slack.com/services/..."><small>Slack, Discord and Google Chat addresses get a message they can show. Any other address gets the alerts as JSON. Alerts go out within a minute</small></label>
+          <div class="webhook-test"><button id="test-webhook" type="button" class="secondary">Send a test alert</button><span id="webhook-test-state" role="status"></span></div>
+          <label>Keep errors and alerts for (days)<input name="errors_retention_days" type="number" min="1" max="365" required></label>
+        </fieldset>
+        <fieldset>
+          <legend>Logs</legend>
+          <label class="check"><input name="logs_enabled" type="checkbox"><span><strong>Collect logs</strong><small>Store structured logs sent by your app</small></span></label>
+          <label>Keep logs for (days)<input name="logs_retention_days" type="number" min="1" max="365" required></label>
+        </fieldset>
+        <fieldset>
+          <legend>Storage</legend>
+          <label>Daily error and log upload limit (MB)<input name="daily_limit_mb" type="number" min="1" max="1048576" step="1" required></label>
+        </fieldset>
+        <p class="hint">Error and log collection start off. These settings apply separately from session recording</p>
+        <p id="observability-settings-error" class="dialog-error" role="alert"></p>
+        <div class="dialog-actions"><button id="close-observability-settings" type="button" class="secondary">Cancel</button><button type="submit">Save error and log settings</button></div>
+      </form>
+    </dialog>
     <dialog id="settings-dialog" class="card" aria-labelledby="settings-title">
       <h2 id="settings-title">Recording settings</h2>
       <form id="settings">
@@ -50,13 +80,13 @@
     </dialog>
     <dialog id="erase-dialog" class="card" aria-labelledby="erase-title">
       <form id="erase-confirm" method="dialog">
-        <h2 id="erase-title">Delete every recording of this account?</h2>
+        <h2 id="erase-title">Delete recordings, errors and logs for this account?</h2>
         <p id="erase-text"></p>
         <label>Type the account ID to confirm<input name="confirm_account" autocomplete="off" spellcheck="false"></label>
-        <div class="dialog-actions"><button type="button" id="erase-cancel" class="secondary">Cancel</button><button type="submit" id="erase-go" class="danger" value="delete" disabled>Delete recordings</button></div>
+        <div class="dialog-actions"><button type="button" id="erase-cancel" class="secondary">Cancel</button><button type="submit" id="erase-go" class="danger" value="delete" disabled>Delete data</button></div>
       </form>
     </dialog>
-    <div class="workspace">
+    <div id="sessions-view" class="workspace" role="tabpanel" aria-labelledby="sessions-tab">
       <section class="card sessions-panel" aria-label="Sessions">
         <form id="filters" class="filters">
           <label>Account<input name="account" autocomplete="off"></label>
@@ -66,7 +96,7 @@
           <label>Through<input name="to" type="date"></label>
           <button type="submit">Find sessions</button>
         </form>
-        <p class="account-tools"><button type="button" id="erase-account" class="danger">Delete every recording of the account in the filter</button></p>
+        <p class="account-tools"><button type="button" id="erase-account" class="danger">Delete recordings, errors and logs for the account in the filter</button></p>
         <p id="session-count" class="session-count"></p>
         <div id="session-scroll" class="session-scroll">
           <ul id="sessions" class="session-list"></ul>
@@ -78,10 +108,82 @@
         <div id="recording" hidden>
           <div class="recording-heading"><h2 id="recording-title">Recording</h2><button id="close-recording">Close</button></div>
           <p id="recording-info"></p><p id="gaps" role="status"></p><p id="idle"></p>
+          <div class="detail-actions"><button id="recording-issues" type="button" class="secondary">Issues for this session</button><button id="recording-logs" type="button" class="secondary">Logs for this session</button></div>
           <div id="player"></div>
           <p id="clock" class="clock"></p>
         </div>
       </section>
+    </div>
+    <div id="issues-view" class="telemetry-view" role="tabpanel" aria-labelledby="issues-tab" hidden>
+      <p id="errors-disabled" class="feature-state" hidden>Error tracking is off. Enable Collect errors in Errors and logs settings to capture new errors</p>
+      <div class="telemetry-workspace">
+        <section class="card telemetry-panel" aria-label="Issues">
+          <form id="issue-filters" class="telemetry-filters">
+            <label class="wide">Search errors<input name="q" type="search" placeholder="Error message or name" autocomplete="off" maxlength="500"></label>
+            <label>Status<select name="status"><option value="open">Open</option><option value="resolved">Resolved</option><option value="ignored">Ignored</option><option value="">All statuses</option></select></label>
+            <label>Service<input name="service" autocomplete="off"></label>
+            <label>Account<input name="accountId" autocomplete="off"></label>
+            <label>Device<input name="deviceId" autocomplete="off"></label>
+            <label class="wide">Session<input name="sessionId" autocomplete="off"></label>
+            <label>From<input name="from" type="date"></label>
+            <label>Through<input name="to" type="date"></label>
+            <button type="submit">Find issues</button>
+          </form>
+          <details class="issue-alerts" open>
+            <summary>Issue alerts <span id="alert-count"></span></summary>
+            <div class="alerts-heading"><p id="alerts-state" role="status"></p><button id="refresh-alerts" type="button" class="secondary">Refresh</button></div>
+            <ul id="alerts" class="telemetry-list alert-list"></ul>
+            <button id="alerts-more" type="button" class="secondary" hidden>Load more alerts</button>
+          </details>
+          <p id="issue-count" class="session-count"></p>
+          <div class="telemetry-scroll"><ul id="issues" class="telemetry-list"></ul><p id="issues-state" class="list-state" role="status"></p><button id="issues-more" type="button" hidden>Load more issues</button></div>
+        </section>
+        <section class="card telemetry-detail" aria-label="Issue details">
+          <div id="no-issue" class="no-recording"><h2>No issue open</h2><p>Choose an issue to review its errors</p></div>
+          <div id="issue-detail" hidden>
+            <div class="recording-heading"><h2 id="issue-title" tabindex="-1"></h2><button id="close-issue" type="button" class="secondary">Close</button></div>
+            <p id="issue-summary"></p>
+            <div id="issue-actions" class="detail-actions"><button type="button" data-issue-status="resolved">Resolve</button><button type="button" data-issue-status="ignored" class="secondary">Ignore</button><button type="button" data-issue-status="open" class="secondary">Reopen</button><button id="issue-logs" type="button" class="secondary" hidden>Logs for this session</button></div>
+            <h3>Occurrences</h3>
+            <ul id="occurrences" class="telemetry-list occurrence-list"></ul>
+            <p id="occurrences-state" class="list-state" role="status"></p><button id="occurrences-more" type="button" class="secondary" hidden>Load more occurrences</button>
+            <div id="occurrence-detail" hidden><h3>Selected occurrence</h3><div id="occurrence-context"></div><h3>Stack trace</h3><pre id="occurrence-stack" class="structured"></pre><h3>Attributes</h3><pre id="occurrence-attributes" class="structured"></pre></div>
+          </div>
+        </section>
+      </div>
+    </div>
+    <div id="logs-view" class="telemetry-view" role="tabpanel" aria-labelledby="logs-tab" hidden>
+      <p id="logs-disabled" class="feature-state" hidden>Log collection is off. Enable Collect logs in Errors and logs settings to capture new logs</p>
+      <div class="telemetry-workspace">
+        <section class="card telemetry-panel" aria-label="Logs">
+          <form id="log-filters" class="telemetry-filters">
+            <label class="wide">Search logs<input name="q" type="search" placeholder="Log message or attributes" autocomplete="off" maxlength="500"></label>
+            <label>Level<select name="level"><option value="">All levels</option><option value="trace">Trace</option><option value="debug">Debug</option><option value="info">Info</option><option value="warn">Warning</option><option value="error">Error</option><option value="fatal">Fatal</option></select></label>
+            <label>Service<input name="service" autocomplete="off"></label>
+            <label>Account<input name="accountId" autocomplete="off"></label>
+            <label>Device<input name="deviceId" autocomplete="off"></label>
+            <label class="wide">Session<input name="sessionId" autocomplete="off"></label>
+            <label>From<input name="from" type="date"></label>
+            <label>Through<input name="to" type="date"></label>
+            <button type="submit">Find logs</button>
+          </form>
+          <p id="log-count" class="session-count"></p>
+          <div class="telemetry-scroll"><ul id="logs" class="telemetry-list"></ul><p id="logs-state" class="list-state" role="status"></p><button id="logs-more" type="button" hidden>Load more logs</button></div>
+        </section>
+        <section class="card telemetry-detail" aria-label="Log volume and details">
+          <section id="log-volume" class="log-volume" aria-labelledby="log-volume-title" hidden>
+            <div class="volume-heading"><h3 id="log-volume-title">Log volume</h3><p id="log-volume-range"></p></div>
+            <ul class="volume-legend">
+              <li data-group="errors">Errors and fatal</li><li data-group="warnings">Warnings</li><li data-group="info">Info</li><li data-group="debug">Debug and trace</li>
+            </ul>
+            <div id="log-volume-chart" class="volume-chart" tabindex="0" role="group" aria-label="Log volume per period. Use the arrow keys to read each period"></div>
+            <div id="log-volume-tip" class="volume-tip" hidden></div>
+            <details class="volume-table"><summary>Show as a table</summary><div class="volume-table-scroll"><table id="log-volume-table"></table></div></details>
+          </section>
+          <div id="no-log" class="no-recording"><h2>No log open</h2><p>Choose a log to inspect its details</p></div>
+          <div id="log-detail" hidden><div class="recording-heading"><h2 id="log-title" tabindex="-1">Log details</h2><button id="close-log" type="button" class="secondary">Close</button></div><pre id="log-message" class="structured log-message"></pre><div id="log-context"></div><div class="detail-actions"><button id="log-issues" type="button" class="secondary" hidden>Issues for this session</button></div><h3>Attributes</h3><pre id="log-attributes" class="structured"></pre></div>
+        </section>
+      </div>
     </div>
   </main>
   <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>

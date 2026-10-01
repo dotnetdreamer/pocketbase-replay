@@ -568,7 +568,7 @@ function eraseFixture(extra) {
     .slice(0, limit);
   const app = {
     runInTransaction: fn => fn(app),
-    findCollectionByNameOrId: name => ({ name }),
+    findCollectionByNameOrId: name => { if (name === 'replay_errors') throw new Error('observability not installed'); return { name }; },
     save: row => markers.set(row.key, row),
     findRecordsByFilter: (name, _where, sort, limit, _offset, params) => {
       if (name === 'replay_settings') return params && params.key ? Array.from(markers.values()).filter(row => row.key === params.key) : [];

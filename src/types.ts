@@ -47,7 +47,10 @@ export interface ReplayController {
   flush: () => Promise<void>;
   refresh: () => Promise<void>;
   getMetrics: () => ReplayMetrics;
+  getSessionContext: () => ReplaySessionContext | null;
 }
+
+export interface ReplaySessionContext { sessionId: string; token: string }
 
 export interface ReplayEvent {
   type: number;

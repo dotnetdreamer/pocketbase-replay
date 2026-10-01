@@ -1,7 +1,7 @@
 {
   "name": "pocketbase-replay",
-  "version": "0.2.1",
-  "description": "DOM session replay for PocketBase, with a browser recorder and private dashboard",
+  "version": "0.3.0",
+  "description": "Session replay, error tracking and structured logs for PocketBase",
   "type": "module",
   "license": "MIT",
   "exports": {
@@ -27,7 +27,8 @@
     "test": "node --import tsx --test test/*.test.ts && node --test server/test/*.test.cjs",
     "build": "node scripts/build-client.mjs && node scripts/build-viewer.mjs",
     "prepack": "npm run build",
-    "prepare": "npm run build"
+    "prepare": "npm run build",
+    "test:integration": "node scripts/verify-observability.mjs"
   },
   "dependencies": {
     "@rrweb/record": "2.1.6",

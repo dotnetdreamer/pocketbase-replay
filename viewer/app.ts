@@ -3,6 +3,10 @@ import 'rrweb-player/dist/style.css';
 import './style.css';
 import { dayBound, IDLE_KEPT_MS, recordedAt, recoverEvents, shortenIdle, type IdlePeriod, type StoredChunk } from './decode';
 import { keepPlaying } from './player';
+import {
+  bucketLabel, PagedRecords, replayOffset, telemetryQuery, VOLUME_GROUPS, volumeColumns, volumeScale,
+  type ErrorOccurrence, type Issue, type IssueAlert, type IssueStatus, type LogEntry, type LogVolume, type ObservabilitySettings, type VolumeColumn,
+} from './observability';
 
 interface Session {
   sessionId: string; accountId: string; deviceId: string; platform: string; appVersion: string;
@@ -20,13 +24,34 @@ let totalItems = 0;
 let listGeneration = 0;
 let loadingList = -1;
 const listed = new Set<string>();
-let player: rrwebPlayer | undefined;
+type ReplayPlayer = rrwebPlayer & { $destroy(): void; $set(size: { width: number; height: number }): void };
+let player: ReplayPlayer | undefined;
 let playbackGeneration = 0;
 let watching = '';
 let idle: IdlePeriod[] = [];
 let recordingGaps = 0;
 let playbackErrors = 0;
 let clockText = '';
+type DashboardTab = 'sessions' | 'issues' | 'logs';
+let activeTab: DashboardTab = 'sessions';
+const issues = new PagedRecords<Issue>();
+const logs = new PagedRecords<LogEntry>();
+const alerts = new PagedRecords<IssueAlert>();
+const occurrences = new PagedRecords<ErrorOccurrence>();
+let selectedIssue: Issue | undefined;
+let selectedOccurrence: ErrorOccurrence | undefined;
+let selectedLog: LogEntry | undefined;
+let issueGeneration = 0;
+let logGeneration = 0;
+let changingIssue = false;
+let alertRefreshTimer = 0;
+let dashboardDisposed = false;
+const readAlerts = new Set<string>();
+const acknowledgingAlerts = new Set<string>();
+let volume: LogVolume | undefined;
+let volumeData: VolumeColumn[] = [];
+let volumeGeneration = 0;
+let volumeFocus = -1;
 try { token = sessionStorage.getItem('pocketbase-replay-admin') ?? ''; } catch { /* Memory-only login. */ }
 
 function status(message: string, error = false): void {
@@ -88,16 +113,30 @@ function resetList(): void {
 }
 
 function signOut(): void {
+  stopAlertRefresh();
+  readAlerts.clear();
+  acknowledgingAlerts.clear();
   token = '';
   try { sessionStorage.removeItem('pocketbase-replay-admin'); } catch { /* Memory-only login. */ }
   closePlayer();
   resetList();
+  for (const records of [issues, logs, alerts, occurrences]) records.reset(new URLSearchParams());
+  closeIssue();
+  closeLog();
+  $('issues').replaceChildren();
+  $('logs').replaceChildren();
+  $('alerts').replaceChildren();
+  clearVolume();
+  $('issues-alert-badge').hidden = true;
   $('dashboard').hidden = true;
   $('logout').hidden = true;
   $('open-settings').hidden = true;
+  $('open-observability-settings').hidden = true;
   $<HTMLDialogElement>('settings-dialog').close();
   $<HTMLDialogElement>('erase-dialog').close();
+  $<HTMLDialogElement>('observability-settings-dialog').close();
   $('login').hidden = false;
+  void selectTab('sessions', false);
 }
 
 async function loadSettings(): Promise<void> {
@@ -239,12 +278,11 @@ async function removeSession(session: Session, item: HTMLElement): Promise<void>
   listState();
 }
 
-// The server deletes 200 sessions per call and reports what is left.
-// Deleting every recording cannot be undone, so the account ID has to be typed again.
+// Each call deletes a bounded batch of account data and reports what remains.
 function confirmErase(account: string): Promise<boolean> {
   const dialog = $<HTMLDialogElement>('erase-dialog');
   const input = field('erase-confirm', 'confirm_account');
-  $('erase-text').textContent = `Every recording of account ${account} will be deleted. This cannot be undone.`;
+  $('erase-text').textContent = `Every recording, error and log for account ${account} will be deleted. This cannot be undone`;
   input.value = '';
   input.oninput = () => { $<HTMLButtonElement>('erase-go').disabled = input.value.trim() !== account; };
   $<HTMLButtonElement>('erase-go').disabled = true;
@@ -259,14 +297,29 @@ async function eraseAccountRecordings(): Promise<void> {
   if (!account) { status('Enter an account ID in the Account filter first', true); return; }
   if (!await confirmErase(account)) return;
   let deleted = 0;
+  let deletedErrors = 0;
+  let deletedLogs = 0;
+  let remaining = false;
   for (let batch = 0; batch < 100; batch++) {
     const result = await request(`/api/replay/accounts/${encodeURIComponent(account)}`, undefined, 'DELETE');
     deleted += result.deletedSessions;
-    if (result.remainingSessions === 0) break;
+    deletedErrors += result.deletedErrors ?? 0;
+    deletedLogs += result.deletedLogs ?? 0;
+    remaining = result.remainingSessions > 0 || (result.remainingErrors ?? 0) > 0 || (result.remainingLogs ?? 0) > 0;
+    if (!remaining) break;
   }
   closePlayer();
   await search();
-  status(`Deleted ${deleted} recording(s) of account ${account}`);
+  issues.reset();
+  logs.reset();
+  alerts.reset();
+  closeIssue();
+  closeLog();
+  clearVolume();
+  renderIssues();
+  renderLogs();
+  renderAlerts();
+  status(`Deleted ${deleted} recording(s), ${deletedErrors} error(s) and ${deletedLogs} log(s) for account ${account}${remaining ? '. More data remains, repeat the deletion to finish' : ''}`, remaining);
 }
 
 function duration(ms: number): string {
@@ -307,7 +360,7 @@ function stacked(): boolean {
   return window.matchMedia('(max-width: 900px)').matches;
 }
 
-async function watch(sessionId: string): Promise<void> {
+async function watch(sessionId: string, timestamp?: number): Promise<void> {
   closePlayer();
   watching = sessionId;
   markWatching();
@@ -354,25 +407,607 @@ async function watch(sessionId: string): Promise<void> {
       UNSAFE_replayCanvas: false,
       tags: Object.fromEntries(marks.map((mark) => [mark.data.tag, '#ffc38a'])),
     },
-  });
+  }) as ReplayPlayer;
   keepPlaying(player.getReplayer(), (error) => { if (generation === playbackGeneration) playbackError(error); });
   const start = shortened.events[0].timestamp;
   player.addEventListener('ui-update-current-time', (value) => {
     if (generation === playbackGeneration) showClock(start + (value as { payload: number }).payload);
   });
-  player.play();
+  if (timestamp === undefined) player.play();
+  else player.goto(replayOffset(recovered.events, shortened.events, timestamp), true);
   if (stacked()) $('viewer').scrollIntoView({ block: 'start' });
   status('Recording loaded');
 }
 
 async function open(): Promise<void> {
-  await loadSettings();
+  await Promise.all([loadSettings(), loadObservabilitySettings()]);
   $('login').hidden = true;
   $('dashboard').hidden = false;
   $('logout').hidden = false;
   $('open-settings').hidden = false;
+  $('open-observability-settings').hidden = false;
   await search();
   status('');
+}
+
+async function loadObservabilitySettings(): Promise<void> {
+  const settings: ObservabilitySettings = await request('/api/replay/observability/settings');
+  for (const key of ['errors_enabled', 'logs_enabled', 'alerts_enabled'] as const) {
+    field('observability-settings', key).checked = settings[key] === true;
+  }
+  for (const key of ['errors_retention_days', 'logs_retention_days', 'daily_limit_mb'] as const) {
+    field('observability-settings', key).value = String(settings[key]);
+  }
+  // An older server has no webhook setting.
+  field('observability-settings', 'alert_webhook_url').value = typeof settings.alert_webhook_url === 'string' ? settings.alert_webhook_url : '';
+  $('webhook-test-state').textContent = '';
+  $('errors-disabled').hidden = settings.errors_enabled === true;
+  $('logs-disabled').hidden = settings.logs_enabled === true;
+}
+
+async function selectTab(tab: DashboardTab, load = true): Promise<void> {
+  if (tab !== 'sessions' && activeTab === 'sessions') closePlayer();
+  activeTab = tab;
+  for (const name of ['sessions', 'issues', 'logs'] as const) {
+    const selected = name === tab;
+    $(`${name}-view`).hidden = !selected;
+    $(`${name}-tab`).setAttribute('aria-selected', String(selected));
+    $(`${name}-tab`).tabIndex = selected ? 0 : -1;
+  }
+  status('');
+  scheduleAlertRefresh();
+  if (!load) return;
+  if (tab === 'issues') {
+    await Promise.all([issues.page ? Promise.resolve() : searchIssues(), alerts.page ? Promise.resolve() : refreshAlerts()]);
+  } else if (tab === 'logs' && !logs.page) await searchLogs();
+}
+
+function filterQuery(id: string, keys: string[]): URLSearchParams {
+  return telemetryQuery(Object.fromEntries(keys.map((key) => [key, field(id, key).value])));
+}
+
+function dateTime(timestamp: number): string {
+  return new Date(timestamp).toLocaleString();
+}
+
+function badge(text: string, level = ''): HTMLSpanElement {
+  const label = document.createElement('span');
+  label.className = 'badge';
+  label.textContent = text;
+  if (level) label.dataset.level = level;
+  return label;
+}
+
+function entryRow(id: string, title: string, info: (string | HTMLElement)[], selected: boolean, action: () => void): HTMLLIElement {
+  const row = document.createElement('li');
+  row.className = 'telemetry-row';
+  row.classList.toggle('selected', selected);
+  row.dataset.record = id;
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'telemetry-open';
+  if (selected) button.setAttribute('aria-current', 'true');
+  const heading = document.createElement('strong');
+  heading.textContent = title;
+  const meta = document.createElement('span');
+  meta.className = 'telemetry-meta';
+  for (const item of info) {
+    if (!item) continue;
+    if (typeof item === 'string') {
+      const text = document.createElement('span');
+      text.textContent = item;
+      meta.append(text);
+    } else meta.append(item);
+  }
+  button.append(heading, meta);
+  button.addEventListener('click', action);
+  row.append(button);
+  return row;
+}
+
+function pageState<T extends { id: string }>(records: PagedRecords<T>, prefix: string, noun: string): void {
+  $(`${prefix}-state`).textContent = records.loading ? `Loading ${noun}...`
+    : !records.page ? '' : !records.totalItems ? `No ${noun} match these filters`
+      : records.more ? '' : `All ${noun} loaded`;
+  $<HTMLButtonElement>(`${prefix}-more`).hidden = !records.page || !records.more;
+  $<HTMLButtonElement>(`${prefix}-more`).disabled = records.loading;
+}
+
+function renderIssues(): void {
+  $('issues').replaceChildren(...Array.from(issues.items.values(), (issue) => entryRow(issue.id, issue.title, [
+    badge(issue.status), badge(issue.level, issue.level), issue.service,
+    `${issue.occurrenceCount} occurrence${issue.occurrenceCount === 1 ? '' : 's'}`, `Last seen ${dateTime(issue.lastSeen)}`,
+  ], selectedIssue?.id === issue.id, () => run(() => openIssue(issue.id)))));
+  $('issue-count').textContent = issues.page ? `${issues.totalItems} issue${issues.totalItems === 1 ? '' : 's'}, ${issues.items.size} loaded` : '';
+  pageState(issues, 'issues', 'issues');
+}
+
+async function searchIssues(): Promise<void> {
+  const query = filterQuery('issue-filters', ['q', 'status', 'service', 'accountId', 'deviceId', 'sessionId', 'from', 'to']);
+  issues.reset(query);
+  closeIssue();
+  renderIssues();
+  await loadIssues();
+}
+
+async function loadIssues(): Promise<void> {
+  const generation = issues.begin();
+  if (generation === undefined) return;
+  renderIssues();
+  try {
+    const query = new URLSearchParams(issues.query);
+    query.set('page', String(issues.page + 1));
+    issues.accept(await request(`/api/replay/issues?${query}`), generation);
+  } finally {
+    issues.finish(generation);
+    if (generation === issues.generation) renderIssues();
+  }
+}
+
+function closeIssue(): void {
+  issueGeneration++;
+  selectedIssue = undefined;
+  selectedOccurrence = undefined;
+  occurrences.reset(new URLSearchParams());
+  $('issue-detail').hidden = true;
+  $('no-issue').hidden = false;
+  $('occurrence-detail').hidden = true;
+  $('occurrences').replaceChildren();
+  for (const row of $('issues').children) {
+    row.classList.remove('selected');
+    row.querySelector('button')?.removeAttribute('aria-current');
+  }
+}
+
+function issueSummary(): void {
+  if (!selectedIssue) return;
+  const issue = selectedIssue;
+  $('issue-title').textContent = issue.title;
+  $('issue-summary').textContent = [
+    issue.status === 'resolved' && issue.resolvedAt ? `Resolved ${dateTime(issue.resolvedAt)}` : issue.status,
+    `${issue.occurrenceCount} occurrence${issue.occurrenceCount === 1 ? '' : 's'}`,
+    `First seen ${dateTime(issue.firstSeen)}`, `Last seen ${dateTime(issue.lastSeen)}`,
+  ].join(' · ');
+  $('issue-actions').querySelectorAll<HTMLButtonElement>('[data-issue-status]').forEach((button) => {
+    button.hidden = button.dataset.issueStatus === issue.status;
+    button.disabled = changingIssue;
+  });
+}
+
+async function openIssue(id: string): Promise<void> {
+  closeIssue();
+  const generation = issueGeneration;
+  status('Loading issue...');
+  const result = await request(`/api/replay/issues/${encodeURIComponent(id)}?page=1`);
+  if (generation !== issueGeneration) return;
+  selectedIssue = result.issue;
+  occurrences.accept(result, occurrences.generation);
+  $('issue-detail').hidden = false;
+  $('no-issue').hidden = true;
+  issueSummary();
+  renderIssues();
+  renderOccurrences();
+  const first = occurrences.items.values().next().value;
+  if (first) showOccurrence(first);
+  if (stacked()) $('issue-title').scrollIntoView({ block: 'start' });
+  $('issue-title').focus({ preventScroll: true });
+  status('');
+}
+
+async function changeIssue(statusValue: IssueStatus): Promise<void> {
+  if (!selectedIssue || changingIssue) return;
+  const id = selectedIssue.id;
+  const generation = issueGeneration;
+  const listVersion = issues.generation;
+  changingIssue = true;
+  issueSummary();
+  try {
+    const saved: Issue = await request(`/api/replay/issues/${encodeURIComponent(id)}`, { status: statusValue });
+    if (generation !== issueGeneration || selectedIssue?.id !== id) return;
+    selectedIssue = { ...selectedIssue, status: saved.status, resolvedAt: saved.resolvedAt };
+    if (issues.items.has(id)) {
+      if (issues.query.get('status') && issues.query.get('status') !== statusValue) {
+        issues.items.delete(id);
+        issues.totalItems = Math.max(0, issues.totalItems - 1);
+        const query = new URLSearchParams(issues.query);
+        query.set('page', String(issues.page));
+        issues.accept(await request(`/api/replay/issues?${query}`), listVersion);
+      } else issues.items.set(id, selectedIssue);
+    }
+    renderIssues();
+    toast(statusValue === 'resolved' ? 'Issue resolved' : statusValue === 'ignored' ? 'Issue ignored' : 'Issue reopened');
+  } finally {
+    changingIssue = false;
+    issueSummary();
+  }
+}
+
+function renderOccurrences(): void {
+  $('occurrences').replaceChildren(...Array.from(occurrences.items.values(), (entry) => entryRow(entry.id, dateTime(entry.timestamp), [
+    entry.accountId || 'Guest', entry.deviceId, entry.service, badge(entry.level, entry.level), entry.handled ? 'Handled' : 'Unhandled',
+  ], selectedOccurrence?.id === entry.id, () => showOccurrence(entry))));
+  pageState(occurrences, 'occurrences', 'occurrences');
+}
+
+async function loadOccurrences(): Promise<void> {
+  if (!selectedIssue) return;
+  const id = selectedIssue.id;
+  const generation = occurrences.begin();
+  if (generation === undefined) return;
+  renderOccurrences();
+  try {
+    occurrences.accept(await request(`/api/replay/issues/${encodeURIComponent(id)}?page=${occurrences.page + 1}`), generation);
+  } finally {
+    occurrences.finish(generation);
+    if (generation === occurrences.generation) renderOccurrences();
+  }
+}
+
+function showContext(target: string, entry: LogEntry, handled?: boolean): void {
+  const context = document.createElement('dl');
+  context.className = 'context-grid';
+  const values: [string, string][] = [
+    ['Recorded at', dateTime(entry.timestamp)], ['Level', entry.level], ['Service', entry.service || 'No service supplied'],
+    ['Account', entry.accountId || 'Guest'], ['Device', entry.deviceId || 'No device supplied'],
+    ['Session', entry.sessionId || 'No session supplied'], ['Platform', entry.platform || 'No platform supplied'],
+    ['App version', entry.appVersion || 'No version supplied'], ['Room', entry.room || 'No room supplied'],
+  ];
+  if (handled !== undefined) values.push(['Error', handled ? 'Handled' : 'Unhandled']);
+  for (const [name, value] of values) {
+    const term = document.createElement('dt');
+    term.textContent = name;
+    const definition = document.createElement('dd');
+    definition.textContent = value;
+    if (name === 'Session' && entry.sessionId && entry.replayAvailable === true) {
+      const open = document.createElement('button');
+      open.type = 'button';
+      open.textContent = 'Watch replay';
+      open.addEventListener('click', () => run(async () => {
+        await selectTab('sessions', false);
+        await watch(entry.sessionId, entry.timestamp);
+      }));
+      definition.append(open);
+    }
+    context.append(term, definition);
+  }
+  $(target).replaceChildren(context);
+}
+
+function showOccurrence(entry: ErrorOccurrence): void {
+  selectedOccurrence = entry;
+  $('occurrence-detail').hidden = false;
+  $('occurrence-stack').textContent = entry.stack || 'No stack trace supplied';
+  $('occurrence-attributes').textContent = JSON.stringify(entry.attributes ?? {}, null, 2);
+  $('issue-logs').hidden = !entry.sessionId;
+  showContext('occurrence-context', entry, entry.handled);
+  renderOccurrences();
+  if (stacked()) $('occurrence-detail').scrollIntoView({ block: 'nearest' });
+}
+
+function renderLogs(): void {
+  $('logs').replaceChildren(...Array.from(logs.items.values(), (entry) => entryRow(entry.id, entry.message, [
+    badge(entry.level, entry.level), entry.service, dateTime(entry.timestamp), entry.accountId || 'Guest',
+  ], selectedLog?.id === entry.id, () => run(() => openLog(entry.id)))));
+  $('log-count').textContent = logs.page ? `${logs.totalItems} log${logs.totalItems === 1 ? '' : 's'}, ${logs.items.size} loaded` : '';
+  pageState(logs, 'logs', 'logs');
+}
+
+async function searchLogs(): Promise<void> {
+  const query = filterQuery('log-filters', ['q', 'level', 'service', 'accountId', 'deviceId', 'sessionId', 'from', 'to']);
+  logs.reset(query);
+  closeLog();
+  renderLogs();
+  await Promise.all([loadLogs(), loadVolume(query)]);
+}
+
+const SVG = 'http://www.w3.org/2000/svg';
+function svg<K extends keyof SVGElementTagNameMap>(name: K, attributes: Record<string, string | number>): SVGElementTagNameMap[K] {
+  const element = document.createElementNS(SVG, name);
+  for (const [key, value] of Object.entries(attributes)) element.setAttribute(key, String(value));
+  return element;
+}
+
+function clearVolume(): void {
+  volumeGeneration++;
+  volume = undefined;
+  volumeData = [];
+  volumeFocus = -1;
+  $('log-volume').hidden = true;
+  $('log-volume').classList.remove('refreshing');
+  $('log-volume-chart').replaceChildren();
+  $('log-volume-table').replaceChildren();
+  $('log-volume-tip').hidden = true;
+}
+
+// A new search keeps the old chart, dimmed, until its own counts arrive.
+async function loadVolume(query: URLSearchParams): Promise<void> {
+  const generation = ++volumeGeneration;
+  $('log-volume').classList.add('refreshing');
+  try {
+    const result: LogVolume = await request(`/api/replay/logs/volume?${query}`);
+    if (generation !== volumeGeneration) return;
+    volume = result;
+    volumeData = volumeColumns(result);
+    volumeFocus = -1;
+    renderVolume();
+  } finally {
+    if (generation === volumeGeneration) $('log-volume').classList.remove('refreshing');
+  }
+}
+
+function periodLabel(column: VolumeColumn): string {
+  const sameDay = new Date(column.start).toDateString() === new Date(column.end).toDateString();
+  const day = { month: 'short', day: 'numeric' } as const, time = { hour: '2-digit', minute: '2-digit' } as const;
+  const start = new Date(column.start).toLocaleString(undefined, volume && volume.bucketMs >= 86400000 ? day : { ...day, ...time });
+  if (volume && volume.bucketMs >= 86400000) return volume.bucketMs === 86400000 ? start : `${start} to ${new Date(column.end).toLocaleString(undefined, day)}`;
+  return `${start} to ${new Date(column.end + 1).toLocaleString(undefined, sameDay ? time : { ...day, ...time })}`;
+}
+
+function roundedTop(x: number, y: number, width: number, height: number, radius: number): string {
+  return `M${x},${y + height}V${y + radius}Q${x},${y} ${x + radius},${y}H${x + width - radius}Q${x + width},${y} ${x + width},${y + radius}V${y + height}Z`;
+}
+
+const VOLUME_BOX = { height: 124, left: 44, right: 6, top: 8, bottom: 22 };
+
+function renderVolume(): void {
+  const chart = $('log-volume-chart');
+  $('log-volume-tip').hidden = true;
+  if (!volume || !volume.total || !volumeData.length) { clearVolume(); return; }
+  $('log-volume').hidden = false;
+  $('log-volume-range').textContent = `${volume.total.toLocaleString()} in ${bucketLabel(volume.bucketMs)} periods`;
+  const width = Math.max(240, chart.clientWidth), { height, left, right, top, bottom } = VOLUME_BOX;
+  const plot = { width: width - left - right, height: height - top - bottom };
+  const max = volumeScale(Math.max(...volumeData.map((column) => column.total)));
+  const slot = plot.width / volumeData.length;
+  const bar = Math.max(1, Math.min(24, slot - 2));
+  const root = svg('svg', { width, height, viewBox: `0 0 ${width} ${height}`, 'aria-hidden': 'true' });
+  root.append(svg('rect', { class: 'volume-hover', x: 0, y: top, width: slot, height: plot.height, visibility: 'hidden' }));
+  for (const fraction of [0, 0.5, 1]) {
+    const y = top + plot.height - fraction * plot.height;
+    root.append(svg('line', { x1: left, x2: width - right, y1: y, y2: y, class: fraction ? 'volume-grid' : 'volume-axis' }));
+    const tick = svg('text', { x: left - 6, y: y + 4, 'text-anchor': 'end', class: 'volume-tick' });
+    tick.textContent = (max * fraction).toLocaleString();
+    root.append(tick);
+  }
+  volumeData.forEach((column, index) => {
+    const x = left + index * slot + (slot - bar) / 2;
+    const parts = column.groups.map((count, group) => ({ count, group })).filter((part) => part.count > 0);
+    let base = top + plot.height;
+    parts.forEach((part, order) => {
+      // A 2px gap in the surface colour between segments, taken out of the upper one so the column keeps its height.
+      const gap = order ? 2 : 0;
+      const size = Math.max(1, part.count / max * plot.height - gap);
+      base -= gap;
+      const radius = order === parts.length - 1 ? Math.min(4, bar / 2, size) : 0;
+      const shape = radius ? svg('path', { d: roundedTop(x, base - size, bar, size, radius) }) : svg('rect', { x, y: base - size, width: bar, height: size });
+      shape.setAttribute('class', `volume-bar volume-${VOLUME_GROUPS[part.group].key}`);
+      root.append(shape);
+      base -= size;
+    });
+  });
+  const day = { month: 'short', day: 'numeric' } as const, time = { hour: '2-digit', minute: '2-digit' } as const;
+  const longRange = volume.to - volume.from >= 86400000 || new Date(volume.from).toDateString() !== new Date(volume.to).toDateString();
+  for (const [at, anchor, x] of [[volume.from, 'start', left], [volume.to, 'end', width - right]] as const) {
+    const label = svg('text', { x, y: height - 6, 'text-anchor': anchor, class: 'volume-tick' });
+    label.textContent = new Date(at).toLocaleString(undefined, longRange ? { ...day, ...(volume.bucketMs < 86400000 ? time : {}) } : time);
+    root.append(label);
+  }
+  chart.replaceChildren(root);
+  const table = $('log-volume-table');
+  const header = document.createElement('tr');
+  for (const name of ['Period', 'Total', ...VOLUME_GROUPS.map((group) => group.label)]) {
+    const cell = document.createElement('th');
+    cell.scope = 'col';
+    cell.textContent = name;
+    header.append(cell);
+  }
+  const rows = volumeData.filter((column) => column.total).map((column) => {
+    const row = document.createElement('tr');
+    for (const value of [periodLabel(column), column.total, ...column.groups]) {
+      const cell = document.createElement('td');
+      cell.textContent = typeof value === 'number' ? value.toLocaleString() : value;
+      row.append(cell);
+    }
+    return row;
+  });
+  table.replaceChildren(header, ...rows);
+}
+
+// Values lead and level names follow, each keyed by a short line in its group's colour.
+function showVolumeTip(index: number): void {
+  const column = volumeData[index];
+  const chart = $('log-volume-chart'), tip = $('log-volume-tip');
+  if (!column || !volume) return;
+  volumeFocus = index;
+  const slot = (chart.clientWidth - VOLUME_BOX.left - VOLUME_BOX.right) / volumeData.length;
+  const hover = chart.querySelector<SVGRectElement>('.volume-hover');
+  hover?.setAttribute('x', String(VOLUME_BOX.left + index * slot));
+  hover?.setAttribute('width', String(slot));
+  hover?.setAttribute('visibility', 'visible');
+  const title = document.createElement('strong');
+  title.textContent = periodLabel(column);
+  const list = document.createElement('div');
+  list.className = 'tip-rows';
+  const levels: [string, string, number][] = [];
+  VOLUME_GROUPS.forEach((group) => {
+    for (const level of group.levels) levels.push([group.key, level, column.counts[level] ?? 0]);
+  });
+  for (const [group, level, count] of [...levels, ['', 'Total', column.total] as [string, string, number]]) {
+    const value = document.createElement('b');
+    value.textContent = count.toLocaleString();
+    const name = document.createElement('span');
+    name.textContent = level === 'warn' ? 'Warning' : level.charAt(0).toUpperCase() + level.slice(1);
+    if (group) name.dataset.group = group;
+    list.append(value, name);
+  }
+  tip.replaceChildren(title, list);
+  tip.hidden = false;
+  const center = chart.offsetLeft + VOLUME_BOX.left + (index + 0.5) * slot;
+  const room = (chart.offsetParent as HTMLElement | null)?.clientWidth ?? chart.clientWidth;
+  tip.style.left = `${Math.max(0, Math.min(room - tip.offsetWidth, center + 12 + tip.offsetWidth > room ? center - 12 - tip.offsetWidth : center + 12))}px`;
+  tip.style.top = `${chart.offsetTop + VOLUME_BOX.top}px`;
+}
+
+function hideVolumeTip(): void {
+  $('log-volume-tip').hidden = true;
+  $('log-volume-chart').querySelector('.volume-hover')?.setAttribute('visibility', 'hidden');
+}
+
+function volumeIndexAt(clientX: number): number {
+  const chart = $('log-volume-chart');
+  const slot = (chart.clientWidth - VOLUME_BOX.left - VOLUME_BOX.right) / Math.max(1, volumeData.length);
+  const index = Math.floor((clientX - chart.getBoundingClientRect().left - VOLUME_BOX.left) / slot);
+  return Math.max(0, Math.min(volumeData.length - 1, index));
+}
+
+async function loadLogs(): Promise<void> {
+  const generation = logs.begin();
+  if (generation === undefined) return;
+  renderLogs();
+  try {
+    const query = new URLSearchParams(logs.query);
+    query.set('page', String(logs.page + 1));
+    logs.accept(await request(`/api/replay/logs?${query}`), generation);
+  } finally {
+    logs.finish(generation);
+    if (generation === logs.generation) renderLogs();
+  }
+}
+
+function closeLog(): void {
+  logGeneration++;
+  selectedLog = undefined;
+  $('log-detail').hidden = true;
+  $('no-log').hidden = false;
+  for (const row of $('logs').children) {
+    row.classList.remove('selected');
+    row.querySelector('button')?.removeAttribute('aria-current');
+  }
+}
+
+async function openLog(id: string): Promise<void> {
+  closeLog();
+  const generation = logGeneration;
+  status('Loading log...');
+  const entry: LogEntry = await request(`/api/replay/logs/${encodeURIComponent(id)}`);
+  if (generation !== logGeneration) return;
+  selectedLog = entry;
+  $('log-detail').hidden = false;
+  $('no-log').hidden = true;
+  $('log-title').textContent = `${entry.level.toUpperCase()} log`;
+  $('log-message').textContent = entry.message;
+  $('log-attributes').textContent = JSON.stringify(entry.attributes ?? {}, null, 2);
+  $('log-issues').hidden = !entry.sessionId;
+  showContext('log-context', entry);
+  renderLogs();
+  if (stacked()) $('log-title').scrollIntoView({ block: 'start' });
+  $('log-title').focus({ preventScroll: true });
+  status('');
+}
+
+async function logsForSession(sessionId: string): Promise<void> {
+  form('log-filters').reset();
+  field('log-filters', 'sessionId').value = sessionId;
+  await selectTab('logs', false);
+  await searchLogs();
+}
+
+async function issuesForSession(sessionId: string): Promise<void> {
+  form('issue-filters').reset();
+  field('issue-filters', 'status').value = '';
+  field('issue-filters', 'sessionId').value = sessionId;
+  await selectTab('issues', false);
+  await Promise.all([searchIssues(), alerts.page ? Promise.resolve() : refreshAlerts()]);
+}
+
+function renderAlerts(): void {
+  const unread = Array.from(alerts.items.values()).filter((alert) => !alert.acknowledged && !readAlerts.has(alert.id)).length;
+  $('alert-count').textContent = alerts.page ? `(${unread} unread${alerts.more ? ' loaded' : ''})` : '';
+  $('issues-alert-badge').textContent = String(unread);
+  $('issues-alert-badge').hidden = !unread;
+  $('issues-alert-badge').setAttribute('aria-label', `${unread} unread alerts${alerts.more ? ' loaded' : ''}`);
+  $('alerts-state').textContent = alerts.loading ? 'Loading alerts...'
+    : !field('observability-settings', 'alerts_enabled').checked ? 'Issue alerts are off in settings'
+      : alerts.page && !alerts.totalItems ? 'No issue alerts yet' : `${alerts.totalItems} alert${alerts.totalItems === 1 ? '' : 's'}`;
+  const ordered = Array.from(alerts.items.values()).sort((left, right) => right.timestamp - left.timestamp);
+  $('alerts').replaceChildren(...ordered.map((alert) => {
+    const isRead = alert.acknowledged || readAlerts.has(alert.id);
+    const delivery = alert.delivery === 'sent' ? 'Sent to webhook' : alert.delivery === 'failed' ? 'Webhook did not accept it' : alert.delivery === 'pending' ? 'Sending to webhook' : '';
+    const row = entryRow(alert.id, alert.title, [alert.kind === 'regressed' ? 'Resolved issue returned' : 'New issue', dateTime(alert.timestamp), delivery], false,
+      () => run(() => openIssue(alert.issueId)));
+    row.classList.add('alert-row');
+    row.classList.toggle('acknowledged', isRead);
+    const acknowledge = document.createElement('button');
+    acknowledge.type = 'button';
+    acknowledge.className = 'secondary';
+    acknowledge.textContent = isRead ? 'Read' : 'Mark read';
+    acknowledge.disabled = isRead || acknowledgingAlerts.has(alert.id);
+    acknowledge.setAttribute('aria-label', `Mark alert for ${alert.title} as read`);
+    acknowledge.addEventListener('click', () => run(async () => {
+      if (acknowledgingAlerts.has(alert.id)) return;
+      const generation = alerts.generation;
+      acknowledgingAlerts.add(alert.id);
+      acknowledge.disabled = true;
+      try {
+        await request(`/api/replay/alerts/${encodeURIComponent(alert.id)}/acknowledge`, { acknowledged: true });
+        if (generation !== alerts.generation) return;
+        readAlerts.add(alert.id);
+        if (alerts.items.has(alert.id)) alerts.items.set(alert.id, { ...alert, acknowledged: true });
+      } finally {
+        acknowledgingAlerts.delete(alert.id);
+        if (generation === alerts.generation) renderAlerts();
+      }
+    }));
+    row.append(acknowledge);
+    return row;
+  }));
+  $<HTMLButtonElement>('alerts-more').hidden = !alerts.page || !alerts.more;
+  $<HTMLButtonElement>('alerts-more').disabled = alerts.loading;
+  $<HTMLButtonElement>('refresh-alerts').disabled = alerts.loading;
+}
+
+async function refreshAlerts(): Promise<void> {
+  alerts.reset(new URLSearchParams());
+  await loadAlerts();
+}
+
+async function loadAlerts(): Promise<void> {
+  const generation = alerts.begin();
+  if (generation === undefined) return;
+  renderAlerts();
+  try {
+    alerts.accept(await request(`/api/replay/alerts?page=${alerts.page + 1}`), generation);
+  } finally {
+    alerts.finish(generation);
+    if (generation === alerts.generation) renderAlerts();
+  }
+}
+
+function stopAlertRefresh(): void {
+  clearTimeout(alertRefreshTimer);
+  alertRefreshTimer = 0;
+}
+
+function scheduleAlertRefresh(): void {
+  stopAlertRefresh();
+  if (!token || activeTab !== 'issues' || document.hidden || dashboardDisposed) return;
+  alertRefreshTimer = window.setTimeout(() => {
+    void pollAlerts().catch(() => {
+      if (activeTab === 'issues' && token) $('alerts-state').textContent = 'Could not refresh alerts. Use Refresh to retry';
+    }).finally(scheduleAlertRefresh);
+  }, 30_000);
+}
+
+async function pollAlerts(): Promise<void> {
+  if (!token || activeTab !== 'issues' || document.hidden || dashboardDisposed) return;
+  const generation = alerts.begin(true);
+  if (generation === undefined) return;
+  try {
+    alerts.accept(await request('/api/replay/alerts?page=1'), generation, true);
+  } finally {
+    alerts.finish(generation);
+    if (generation === alerts.generation) renderAlerts();
+  }
 }
 
 function run(action: () => Promise<void>): void {
@@ -397,6 +1032,63 @@ $('open-settings').addEventListener('click', () => run(async () => {
   $<HTMLDialogElement>('settings-dialog').showModal();
 }));
 $('close-settings').addEventListener('click', () => $<HTMLDialogElement>('settings-dialog').close());
+$('open-observability-settings').addEventListener('click', () => run(async () => {
+  await loadObservabilitySettings();
+  $('observability-settings-error').textContent = '';
+  $<HTMLDialogElement>('observability-settings-dialog').showModal();
+}));
+$('close-observability-settings').addEventListener('click', () => $<HTMLDialogElement>('observability-settings-dialog').close());
+$('test-webhook').addEventListener('click', () => {
+  const button = $<HTMLButtonElement>('test-webhook');
+  const state = $('webhook-test-state');
+  button.disabled = true;
+  state.textContent = 'Sending...';
+  request('/api/replay/alerts/test', { alert_webhook_url: field('observability-settings', 'alert_webhook_url').value.trim() })
+    .then(() => { state.textContent = 'Test alert sent. Check that it arrived'; })
+    .catch((error: unknown) => { state.textContent = error instanceof Error ? error.message : 'Request failed'; })
+    .finally(() => { button.disabled = false; });
+});
+$('log-volume-chart').addEventListener('pointermove', (event) => { if (volumeData.length) showVolumeTip(volumeIndexAt(event.clientX)); });
+$('log-volume-chart').addEventListener('pointerleave', () => { if (document.activeElement !== $('log-volume-chart')) hideVolumeTip(); });
+$('log-volume-chart').addEventListener('focus', () => {
+  if (!volumeData.length) return;
+  const last = volumeData.map((column) => column.total > 0).lastIndexOf(true);
+  showVolumeTip(volumeFocus >= 0 ? volumeFocus : last);
+});
+$('log-volume-chart').addEventListener('blur', hideVolumeTip);
+$('log-volume-chart').addEventListener('keydown', (event: KeyboardEvent) => {
+  if (!volumeData.length) return;
+  const moves: Record<string, number> = { ArrowLeft: volumeFocus - 1, ArrowRight: volumeFocus + 1, Home: 0, End: volumeData.length - 1 };
+  if (event.key === 'Escape') { hideVolumeTip(); return; }
+  if (!(event.key in moves)) return;
+  event.preventDefault();
+  showVolumeTip(Math.max(0, Math.min(volumeData.length - 1, moves[event.key])));
+});
+new ResizeObserver(() => { if (volume) renderVolume(); }).observe($('log-volume-chart'));
+form('observability-settings').addEventListener('submit', (event) => {
+  event.preventDefault();
+  $('observability-settings-error').textContent = '';
+  const submit = form('observability-settings').querySelector<HTMLButtonElement>('button[type="submit"]')!;
+  submit.disabled = true;
+  void (async () => {
+    const settings: ObservabilitySettings = {
+      errors_enabled: field('observability-settings', 'errors_enabled').checked,
+      logs_enabled: field('observability-settings', 'logs_enabled').checked,
+      alerts_enabled: field('observability-settings', 'alerts_enabled').checked,
+      errors_retention_days: Number(field('observability-settings', 'errors_retention_days').value),
+      logs_retention_days: Number(field('observability-settings', 'logs_retention_days').value),
+      daily_limit_mb: Number(field('observability-settings', 'daily_limit_mb').value),
+      alert_webhook_url: field('observability-settings', 'alert_webhook_url').value.trim(),
+    };
+    await request('/api/replay/observability/settings', settings);
+    await loadObservabilitySettings();
+    renderAlerts();
+    $<HTMLDialogElement>('observability-settings-dialog').close();
+    toast('Error and log settings saved');
+  })().catch((error: unknown) => {
+    $('observability-settings-error').textContent = error instanceof Error ? error.message : 'Request failed';
+  }).finally(() => { submit.disabled = false; });
+});
 field('settings', 'mode').addEventListener('change', showModeFields);
 $('erase-cancel').addEventListener('click', () => $<HTMLDialogElement>('erase-dialog').close());
 form('settings').addEventListener('submit', (event) => {
@@ -430,6 +1122,42 @@ new IntersectionObserver((entries) => {
 }, { root: $('session-scroll'), rootMargin: '0px 0px 300px 0px' }).observe($('sessions-end'));
 $('close-recording').addEventListener('click', closePlayer);
 $('logout').addEventListener('click', () => { signOut(); status('Signed out'); });
+for (const tab of ['sessions', 'issues', 'logs'] as const) {
+  $(`${tab}-tab`).addEventListener('click', () => run(() => selectTab(tab)));
+  $(`${tab}-tab`).addEventListener('keydown', (event: KeyboardEvent) => {
+    const tabs: DashboardTab[] = ['sessions', 'issues', 'logs'];
+    let next = tabs.indexOf(tab);
+    if (event.key === 'ArrowRight') next = (next + 1) % tabs.length;
+    else if (event.key === 'ArrowLeft') next = (next + tabs.length - 1) % tabs.length;
+    else if (event.key === 'Home') next = 0;
+    else if (event.key === 'End') next = tabs.length - 1;
+    else return;
+    event.preventDefault();
+    $(`${tabs[next]}-tab`).focus();
+    run(() => selectTab(tabs[next]));
+  });
+}
+form('issue-filters').addEventListener('submit', (event) => { event.preventDefault(); run(searchIssues); });
+form('log-filters').addEventListener('submit', (event) => { event.preventDefault(); run(searchLogs); });
+$('issues-more').addEventListener('click', () => run(loadIssues));
+$('logs-more').addEventListener('click', () => run(loadLogs));
+$('alerts-more').addEventListener('click', () => run(loadAlerts));
+$('occurrences-more').addEventListener('click', () => run(loadOccurrences));
+$('refresh-alerts').addEventListener('click', () => run(refreshAlerts));
+$('close-issue').addEventListener('click', closeIssue);
+$('close-log').addEventListener('click', closeLog);
+$('issue-actions').querySelectorAll<HTMLButtonElement>('[data-issue-status]').forEach((button) => {
+  button.addEventListener('click', () => run(() => changeIssue(button.dataset.issueStatus as IssueStatus)));
+});
+$('issue-logs').addEventListener('click', () => { if (selectedOccurrence?.sessionId) run(() => logsForSession(selectedOccurrence!.sessionId)); });
+$('log-issues').addEventListener('click', () => { if (selectedLog?.sessionId) run(() => issuesForSession(selectedLog!.sessionId)); });
+$('recording-issues').addEventListener('click', () => { const id = watching; if (id) run(() => issuesForSession(id)); });
+$('recording-logs').addEventListener('click', () => { const id = watching; if (id) run(() => logsForSession(id)); });
+document.addEventListener('keydown', (event) => {
+  if (event.key !== 'Escape' || document.querySelector('dialog[open]')) return;
+  if (activeTab === 'issues' && selectedIssue) { closeIssue(); $('issues-tab').focus(); }
+  else if (activeTab === 'logs' && selectedLog) { closeLog(); $('logs-tab').focus(); }
+});
 // The space changes with the window and with notes that appear during playback.
 let resizeTimer = 0;
 new ResizeObserver(() => {
@@ -440,5 +1168,7 @@ new ResizeObserver(() => {
     player.triggerResize();
   }, 100);
 }).observe($('player'));
-window.addEventListener('pagehide', closePlayer);
+document.addEventListener('visibilitychange', scheduleAlertRefresh);
+window.addEventListener('pagehide', () => { dashboardDisposed = true; stopAlertRefresh(); closePlayer(); });
+window.addEventListener('pageshow', () => { dashboardDisposed = false; scheduleAlertRefresh(); });
 if (token) void open().catch(() => { signOut(); status('Sign in again to view recordings'); });

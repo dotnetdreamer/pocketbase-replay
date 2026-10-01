@@ -1,7 +1,7 @@
 {
   "name": "capacitor-pocketbase-replay",
-  "version": "0.1.0",
-  "description": "Capacitor plugin for PocketBase Replay, with native app state on Android and iOS",
+  "version": "0.2.0",
+  "description": "Capacitor plugin for PocketBase Replay, error tracking and logs, with native app lifecycle",
   "type": "module",
   "license": "MIT",
   "author": "Idrees Khan",
@@ -52,7 +52,7 @@
   },
   "peerDependencies": {
     "@capacitor/core": ">=8.0.0",
-    "pocketbase-replay": "^0.2.0"
+    "pocketbase-replay": "^0.3.0"
   },
   "devDependencies": {
     "@capacitor/android": "8.5.0",

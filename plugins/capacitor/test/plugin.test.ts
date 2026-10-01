@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { PluginListenerHandle } from '@capacitor/core';
-import type { ReplayController, ReplayMetrics, ReplayOptions } from 'pocketbase-replay';
+import type { ObservabilityController, ObservabilityMetrics, ObservabilityOptions, ReplayController, ReplayMetrics, ReplayOptions } from 'pocketbase-replay';
 import type { AppState, NativeReplayPlugin } from '../src/native';
 import { createPlugin } from '../src/plugin';
 
@@ -17,6 +17,8 @@ async function drain(): Promise<void> { for (let i = 0; i < 5; i++) await new Pr
 function fakeClient() {
   const started: ReplayOptions[] = [];
   const recorders: { stopped: number; flushed: number; refreshed: number }[] = [];
+  const observabilityStarted: ObservabilityOptions[] = [];
+  const captures: { stopped: number; flushed: number; refreshed: number; exceptions: unknown[]; logs: unknown[] }[] = [];
   const startReplay = (value: ReplayOptions): ReplayController => {
     const recorder = { stopped: 0, flushed: 0, refreshed: 0 };
     started.push(value);
@@ -26,9 +28,20 @@ function fakeClient() {
       flush: async () => { recorder.flushed++; },
       refresh: async () => { recorder.refreshed++; },
       getMetrics: () => ({ recording: true, events: recorders.length }) as ReplayMetrics,
+      getSessionContext: () => ({ sessionId: 'session00000001', token: 's'.repeat(64) }),
     };
   };
-  return { started, recorders, client: { startReplay } };
+  const startObservability = (value: ObservabilityOptions): ObservabilityController => {
+    const capture = { stopped: 0, flushed: 0, refreshed: 0, exceptions: [] as unknown[], logs: [] as unknown[] };
+    observabilityStarted.push(value); captures.push(capture);
+    return {
+      stop: () => { capture.stopped++; }, flush: async () => { capture.flushed++; }, refresh: async () => { capture.refreshed++; },
+      captureException: (error, context) => { capture.exceptions.push({ error, context }); return 'error-id'; },
+      captureLog: (level, message, attributes) => { capture.logs.push({ level, message, attributes }); return 'log-id'; },
+      getMetrics: () => ({ errorsEnabled: true, logsEnabled: true }) as ObservabilityMetrics,
+    };
+  };
+  return { started, recorders, observabilityStarted, captures, client: { startReplay, startObservability } };
 }
 
 function fakeNative() {
@@ -187,4 +200,52 @@ test('a client that fails to load rejects start, and a later start still works',
   fail = false;
   await replay.start(options);
   assert.equal(started.length, 1);
+});
+
+test('errors and logs opt-ins start capture with replay credentials and share flush, refresh and stop', async () => {
+  const f = fakeClient(), replay = plugin('ios', f.client);
+  await replay.start({ ...options, errors: { captureUnhandled: true }, logs: true, service: 'game' });
+  assert.equal(f.observabilityStarted.length, 1);
+  // Neither controller is refreshed again by start: each asks for its settings when it is created.
+  assert.equal(f.captures[0].refreshed, 0);
+  assert.equal(f.recorders[0].refreshed, 0);
+  assert.equal(f.observabilityStarted[0].service, 'game');
+  assert.deepEqual(f.observabilityStarted[0].replay!.getSessionContext(), { sessionId: 'session00000001', token: 's'.repeat(64) });
+  const error = new Error('failed');
+  assert.deepEqual(await replay.captureException({ error, handled: false, attributes: { attempt: 1 } }), { id: 'error-id' });
+  assert.deepEqual(await replay.captureLog({ level: 'warn', message: 'slow', attributes: { duration: 20 } }), { id: 'log-id' });
+  assert.deepEqual(f.captures[0].exceptions[0], { error, context: { handled: false, attributes: { attempt: 1 } } });
+  await replay.flush(); await replay.refresh();
+  assert.equal(f.captures[0].flushed, 1); assert.equal(f.captures[0].refreshed, 1); assert.equal(f.recorders[0].refreshed, 1);
+  await replay.stop(); assert.equal(f.captures[0].stopped, 1); assert.equal(f.recorders[0].stopped, 1);
+  assert.deepEqual(await replay.getObservabilityMetrics(), { metrics: null });
+  assert.deepEqual(await replay.captureLog({ level: 'info', message: 'stopped' }), { id: null });
+});
+
+test('standalone capture survives a replay-only start, and stopping it leaves replay running', async () => {
+  const f = fakeClient(), replay = plugin('android', f.client);
+  await replay.startObservability({ ...options, errors: true });
+  assert.equal(f.started.length, 0);
+  assert.equal(f.observabilityStarted[0].replay!.getSessionContext(), null);
+  await replay.start(options);
+  assert.equal(f.captures[0].stopped, 0);
+  assert.equal(f.observabilityStarted.length, 1);
+  // The running capture picks up the new recording for its links.
+  assert.deepEqual(f.observabilityStarted[0].replay!.getSessionContext(), { sessionId: 'session00000001', token: 's'.repeat(64) });
+  await replay.start({ ...options, logs: true });
+  assert.equal(f.captures[0].stopped, 1);
+  assert.equal(f.observabilityStarted.length, 2);
+  await replay.startObservability({ ...options, logs: true });
+  await replay.stopObservability();
+  assert.equal(f.captures[2].stopped, 1); assert.equal(f.recorders[1].stopped, 0);
+  await replay.stop();
+});
+
+test('stopObservability cancels a standalone start still loading the client', async () => {
+  const f = fakeClient(); let release!: (client: Client) => void;
+  const replay = createPlugin({ platform: () => 'web', nativeAvailable: () => false, native: fakeNative().native,
+    loadClient: () => new Promise<Client>((resolve) => { release = resolve; }) });
+  const start = replay.startObservability({ ...options, logs: true });
+  await replay.stopObservability(); release(f.client); await start;
+  assert.equal(f.captures.length, 0); assert.deepEqual(await replay.getObservabilityMetrics(), { metrics: null });
 });

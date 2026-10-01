@@ -2,6 +2,11 @@
 
 [Back to README](../README.md)
 
+Error and log ingestion uses the same account verification as replay. Account
+deletion also erases related errors and logs and updates affected issue
+summaries. Alerts disappear when an issue has no remaining occurrences; shared
+issues retain alerts with updated titles. See [errors and logs](observability.md)
+
 ## Verify accounts
 
 When replay shares your app's PocketBase database, the recorder's `authToken` is verified locally
@@ -37,9 +42,10 @@ When full, the cache replaces the entry closest to expiry
 
 An app server restart can therefore pause verification without ending every running recording
 
-## Delete an account's recordings
+## Delete an account's recordings, errors and logs
 
-When replay shares your app's database, it erases associated recordings before a `users` record is deleted
+When replay shares your app's database, it erases associated recordings, errors
+and logs before a `users` record is deleted
 
 Set `REPLAY_AUTH_COLLECTION` if your accounts use another collection name
 
@@ -54,8 +60,11 @@ Content-Type: application/json
 ```
 
 - Set `REPLAY_ERASE_KEY` to the same random secret of at least 32 characters on both servers
-- Repeat the request until `remainingSessions` is zero
-- Each request removes up to 200 of the account's oldest sessions and their chunks, and blocks new sessions for that account for 24 hours
+- Repeat the request until `remainingSessions`, `remainingErrors` and
+  `remainingLogs` are all zero. Older servers omit the diagnostic counts
+- Each request removes up to 200 sessions and their chunks, 1,000 errors and
+  1,000 logs. It blocks new recording and diagnostic sessions for that account
+  for 24 hours
 - If erasure fails, fail or retry account deletion, or let the retention period remove the remaining recordings
 - Keep this endpoint internal where possible
 
@@ -67,7 +76,9 @@ Sessions recorded without an account are not linked to that account and expire a
 
 With `REPLAY_ERASE_KEY` unset, the erasure route returns 503, so use the dashboard to delete recordings manually
 
-- **Delete** on a session row removes that recording
-- **Delete every recording of the account in the filter** removes all sessions for that account, in batches of 200 until none remain
+- **Delete** on a session row removes that recording. Errors and logs linked to
+  it stay, without the link
+- The account deletion action removes its recordings, errors and logs, in
+  batches until none remain
 
 Neither dashboard action blocks the account from being recorded again

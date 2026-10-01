@@ -10,7 +10,8 @@ It is not a pixel video archive, and canvas areas remain blank
 
 - All input values and contenteditable text are masked
 - Canvas, iframes, video and audio are blocked
-- No screenshots, WebGL capture, microphone, console or network payload recording is enabled
+- No screenshots, WebGL capture, microphone or network payload recording is enabled
+- Replay does not record console output. The separate [logs feature](observability.md) can collect selected console levels when explicitly enabled
 - Text rendered outside an input needs a mask or block rule, set in the dashboard or passed to `startReplay`, or a `sensitiveText` list
 - A rule the app cannot parse stops recording instead of leaving text unmasked
 - Sensitive attributes and every `data-*` attribute outside a short safe list are removed, which can make some layouts replay slightly off
@@ -23,6 +24,15 @@ Review [privacy rules](configuration.md#privacy-rules) against your actual UI an
 Uploads use per-session credentials, gzip compression, sequence numbers and idempotent retries
 
 All replay reads require a superuser, and client claims never authorize replay reads
+
+Errors and logs use separate short-lived upload credentials. Linking an entry
+to a recording requires that recording's upload credential and matching
+account and device metadata. Error, log and alert reads also require a superuser
+
+DOM masking rules do not apply to error messages or log attributes. Configure
+`sensitiveText` and `beforeSend` for the diagnostics controller, and avoid
+putting private messages or personal data in application logs. See
+[diagnostics privacy](observability.md#privacy-and-limits)
 
 ## Client buffers and recovery
 

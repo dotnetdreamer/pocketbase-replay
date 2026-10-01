@@ -395,6 +395,12 @@ function remove(e) {
   return { ok: true };
 }
 
+// Errors and logs are their own installable part; without their migration there is nothing of theirs to erase.
+function observability(app) {
+  try { app.findCollectionByNameOrId('replay_errors'); } catch (_) { return null; }
+  return require('./observability.js');
+}
+
 function removeSessions(tx, filter, params, limit) {
   const rows = tx.findRecordsByFilter('replay_sessions', filter, 'startedAt,id', limit, 0, params);
   if (!rows.length) return 0;
@@ -408,13 +414,16 @@ function removeSessions(tx, filter, params, limit) {
 function eraseAccountBatch(app, accountId, mark) {
   let deleted = 0;
   let remaining = 0;
+  let diagnostics;
   app.runInTransaction(function (tx) {
     // Close the gap between remote auth and the account's final deletion.
     if (mark) markForgotten(tx, accountId);
     deleted = removeSessions(tx, 'accountId = {:account}', { account: accountId }, 200);
     remaining = count(tx, 'replay_sessions', 'accountId = {:account}', { account: accountId });
+    const telemetry = observability(tx);
+    if (telemetry) diagnostics = telemetry.eraseBatch(tx, 'accountId', accountId, 1000);
   });
-  return { ok: true, deletedSessions: deleted, remainingSessions: remaining };
+  return Object.assign({ ok: true, deletedSessions: deleted, remainingSessions: remaining }, diagnostics || {});
 }
 
 function eraseAccount(e) {
@@ -436,6 +445,8 @@ function deleteLocalAccount(e) {
   e.app.runInTransaction(function (tx) {
     markForgotten(tx, e.record.id);
     const params = { account: e.record.id };
+    const telemetry = observability(tx);
+    if (telemetry) telemetry.eraseAccountAll(tx, e.record.id);
     tx.db().newQuery('DELETE FROM replay_chunks WHERE session IN (SELECT id FROM replay_sessions WHERE accountId = {:account})').bind(params).execute();
     tx.db().newQuery('DELETE FROM replay_sessions WHERE accountId = {:account}').bind(params).execute();
   });

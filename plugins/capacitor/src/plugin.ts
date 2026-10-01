@@ -1,5 +1,5 @@
 import type { PluginListenerHandle } from '@capacitor/core';
-import type { ReplayController, ReplayOptions } from 'pocketbase-replay';
+import type { ObservabilityController, ObservabilityOptions, ReplayController, ReplayOptions } from 'pocketbase-replay';
 
 import type { PocketBaseReplayPlugin } from './definitions.js';
 import type { NativeReplayPlugin } from './native.js';
@@ -10,7 +10,10 @@ export interface PluginRuntime {
   platform: () => string;
   nativeAvailable: () => boolean;
   native: NativeReplayPlugin;
-  loadClient: () => Promise<{ startReplay: (options: ReplayOptions) => ReplayController }>;
+  loadClient: () => Promise<{
+    startReplay: (options: ReplayOptions) => ReplayController;
+    startObservability: (options: ObservabilityOptions) => ObservabilityController;
+  }>;
 }
 
 function quietly(action: () => Promise<unknown>): void {
@@ -40,13 +43,24 @@ function nativeLifecycle(native: NativeReplayPlugin): SubscribeActive {
 
 export function createPlugin(runtime: PluginRuntime): PocketBaseReplayPlugin {
   let controller: ReplayController | undefined;
+  let observability: ObservabilityController | undefined;
   // Every start and stop takes a new number, so a start still loading the client knows it was overtaken.
   let generation = 0;
+  let observabilityGeneration = 0;
 
   function halt(): void {
     const running = controller;
     controller = undefined;
     running?.stop();
+  }
+  function haltObservability(): void {
+    const running = observability;
+    observability = undefined;
+    running?.stop();
+  }
+  function observabilityOptions(options: ObservabilityOptions): ObservabilityOptions {
+    return { ...options, subscribeActive: options.subscribeActive ?? subscribeActive(),
+      replay: options.replay ?? { getSessionContext: () => controller?.getSessionContext() ?? null } };
   }
 
   function subscribeActive(): SubscribeActive | undefined {
@@ -59,23 +73,49 @@ export function createPlugin(runtime: PluginRuntime): PocketBaseReplayPlugin {
   return {
     async start(options) {
       const run = ++generation;
+      // Only options that ask for errors or logs replace the running capture; a replay-only start leaves it running.
+      const capture = !!(options.errors || options.logs);
+      const captureRun = capture ? ++observabilityGeneration : 0;
       halt();
-      const { startReplay } = await runtime.loadClient();
+      if (capture) haltObservability();
+      const { startReplay, startObservability } = await runtime.loadClient();
+      // Both controllers ask the server for their settings themselves, and capture queues until the answer.
+      if (capture && captureRun === observabilityGeneration) observability = startObservability(observabilityOptions(options));
       if (run !== generation) return;
       controller = startReplay({ ...options, subscribeActive: options.subscribeActive ?? subscribeActive() });
     },
     async stop() {
-      generation++;
-      halt();
+      generation++; observabilityGeneration++;
+      halt(); haltObservability();
     },
     async flush() {
-      await controller?.flush();
+      await Promise.all([controller?.flush(), observability?.flush()]);
     },
     async refresh() {
-      await controller?.refresh();
+      await Promise.all([controller?.refresh(), observability?.refresh()]);
     },
     async getMetrics() {
       return { metrics: controller?.getMetrics() ?? null };
+    },
+    async startObservability(options) {
+      const run = ++observabilityGeneration;
+      haltObservability();
+      const { startObservability } = await runtime.loadClient();
+      if (run !== observabilityGeneration) return;
+      observability = startObservability(observabilityOptions(options));
+    },
+    async stopObservability() {
+      observabilityGeneration++;
+      haltObservability();
+    },
+    async captureException({ error, ...context }) {
+      return { id: observability?.captureException(error, context) ?? null };
+    },
+    async captureLog({ level, message, attributes }) {
+      return { id: observability?.captureLog(level, message, attributes) ?? null };
+    },
+    async getObservabilityMetrics() {
+      return { metrics: observability?.getMetrics() ?? null };
     },
   };
 }

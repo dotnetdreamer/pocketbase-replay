@@ -45,12 +45,16 @@ The installer adds these files without replacing your hooks, migrations or data:
 pb_hooks/700_replay.pb.js
 pb_hooks/lib/replay.js
 pb_hooks/lib/replay-core.js
+pb_hooks/710_observability.pb.js
+pb_hooks/lib/observability.js
+pb_hooks/lib/observability-core.js
 pb_hooks/replay-dash/
 pb_migrations/1795600000_replay.js
+pb_migrations/1795600002_observability.js
 ```
 
-Restart PocketBase to create `replay_settings`, `replay_sessions` and
-`replay_chunks`
+Restart PocketBase to create `replay_settings`, `replay_sessions`,
+`replay_chunks`, and the error, log and alert collections
 
 The migration refuses an existing collection with a conflicting name and never
 imports a full database schema
@@ -71,6 +75,9 @@ Delete the files and the `replay-dash/` folder listed above, then run the
 installer from the new package version and restart PocketBase
 
 The installer refuses to overwrite a file that differs
+
+The error and log migration adds collections without changing existing
+recordings. Both features start disabled, including on upgraded servers
 
 ## Dedicated replay database
 

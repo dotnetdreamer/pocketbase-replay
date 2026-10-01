@@ -17,6 +17,27 @@ Tests cover queue bounds, retries, snapshot recovery, masking, settings, server
 privacy rules, lifecycle, Capacitor detection, server validation, account
 verification, erasure and migration isolation
 
+Error and log checks also cover issue grouping, alerts, filtering, credential
+scope, redaction, bounded queues and plugin capture methods
+
+To verify the hooks and migration against real PocketBase 0.39.9:
+
+```sh
+REPLAY_PB_BIN=/path/to/pocketbase npm run test:integration
+```
+
+The runner installs into a temporary directory, starts an isolated server on
+port 8099, checks ingestion and dashboard APIs, and removes its data on exit.
+Set `REPLAY_TEST_PORT` to use another free port
+
+For a browser check, leave the fixture running until Ctrl+C:
+
+```sh
+REPLAY_PB_BIN=/path/to/pocketbase npm run test:integration -- --serve
+```
+
+Open the printed dashboard URL and use the local credentials the runner prints
+
 ## Performance checks
 
 Measure frame times, CPU and bytes per minute in the integrating app on its own

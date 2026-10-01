@@ -2,6 +2,14 @@
 
 [Back to README](../README.md)
 
+## Errors and logs settings
+
+Errors and logs have independent switches in the dashboard's Error and log
+settings. Each has its own retention period, and they share a daily storage
+budget. These switches do not change replay sampling
+
+See [errors and logs](observability.md) for the settings table and client options
+
 ## Recording settings
 
 The dashboard edits rows in `replay_settings`

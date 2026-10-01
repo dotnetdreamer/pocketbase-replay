@@ -2,6 +2,10 @@
 
 [Back to README](../README.md)
 
+For exception and log capture, use [`startObservability`](observability.md)
+alongside `startReplay`, or on its own. The Capacitor plugin supports the same
+capture options
+
 ## Connect your app
 
 ```js
