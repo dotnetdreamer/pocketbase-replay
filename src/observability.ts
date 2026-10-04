@@ -50,8 +50,16 @@ function fit(event: ObservabilityEvent): string | null {
 
 export function createObservability(options: ObservabilityOptions, runtime: ObservabilityRuntime): ObservabilityController {
   const endpoint = options.endpoint.replace(/\/+$/, '');
+  const apiKey = typeof options.apiKey === 'string' ? options.apiKey.trim() : '';
   const localErrors = enabled(options.errors), localLogs = enabled(options.logs);
-  const storageKey = `pocketbase-replay:observability:${endpoint}`;
+  const storageBase = `pocketbase-replay:observability:${endpoint}`;
+  let storageKey = apiKey ? '' : storageBase;
+  const storageScope = apiKey && runtime.storage ? (async () => {
+    try {
+      const digest = await globalThis.crypto.subtle.digest('SHA-256', new TextEncoder().encode(apiKey));
+      return `${storageBase}:${Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('')}`;
+    } catch { return ''; }
+  })() : null;
   let closed = !endpoint || !options.transport || !(localErrors || localLogs);
   let identity = '', token = '', expiresAt = 0, epoch = 0;
   // Until the server first answers for an identity, entries wait in the queue instead of being refused,
@@ -93,16 +101,16 @@ export function createObservability(options: ObservabilityOptions, runtime: Obse
   // The upload credential is kept across reloads, so a page that reloads often does not need a new one each time.
   function saved(forIdentity: string): string {
     try {
-      const value = JSON.parse(runtime.storage?.get(storageKey) ?? 'null') as { identity?: unknown; token?: unknown; expiresAt?: unknown } | null;
+      const value = JSON.parse(storageKey ? runtime.storage?.get(storageKey) ?? 'null' : 'null') as { identity?: unknown; token?: unknown; expiresAt?: unknown } | null;
       return value && value.identity === forIdentity && typeof value.token === 'string' && /^[A-Za-z0-9]{64}$/.test(value.token) &&
         typeof value.expiresAt === 'number' && value.expiresAt > runtime.now() ? value.token : '';
     } catch { return ''; }
   }
   function remember(forIdentity: string): void {
-    try { runtime.storage?.set(storageKey, JSON.stringify({ identity: forIdentity, token, expiresAt })); } catch { /* Kept in memory only. */ }
+    try { if (storageKey) runtime.storage?.set(storageKey, JSON.stringify({ identity: forIdentity, token, expiresAt })); } catch { /* Kept in memory only. */ }
   }
   function forget(): void {
-    try { runtime.storage?.remove(storageKey); } catch { /* Kept in memory only. */ }
+    try { if (storageKey) runtime.storage?.remove(storageKey); } catch { /* Kept in memory only. */ }
   }
   // Entries never move to another account or device: a new identity drops the old one's queue and asks again.
   function switchIdentity(next: string): void {
@@ -229,14 +237,14 @@ export function createObservability(options: ObservabilityOptions, runtime: Obse
     const first = queue.find((entry) => entry.identity === identity);
     if (!first) return null;
     const kind = first.event.kind, entries: Entry[] = [];
-    let bytes = byteLength(JSON.stringify({ token, events: [] }));
+    let bytes = byteLength(JSON.stringify({ token, ...(apiKey ? { apiKey } : {}), events: [] }));
     for (const entry of queue) {
       if (entry.identity !== identity || entry.event.kind !== kind) continue;
       if (entries.length >= maxBatchEvents || bytes + entry.bytes + 1 > OBSERVABILITY_LIMITS.batchBytes) break;
       entries.push(entry); bytes += entry.bytes + 1;
     }
     if (!entries.length) return null;
-    return { entries, body: `{"token":${JSON.stringify(token)},"events":[${entries.map((entry) => entry.json).join(',')}]}`,
+    return { entries, body: `{"token":${JSON.stringify(token)},${apiKey ? `"apiKey":${JSON.stringify(apiKey)},` : ''}"events":[${entries.map((entry) => entry.json).join(',')}]}`,
       url: `${endpoint}/api/replay/${kind === 'error' ? 'errors' : 'logs'}` };
   }
   function scheduleRetry(): void {
@@ -297,9 +305,12 @@ export function createObservability(options: ObservabilityOptions, runtime: Obse
     const nextIdentity = identityOf(value);
     if (identity !== nextIdentity) switchIdentity(nextIdentity);
     lastRefreshAt = runtime.now();
-    const expectedEpoch = epoch, sent = token || saved(nextIdentity);
+    const expectedEpoch = epoch;
     try {
-      const answer = await options.transport!.post(`${endpoint}/api/replay/observability/config`, JSON.stringify({ ...value, ...(sent ? { token: sent } : {}) })) as Record<string, unknown>;
+      if (storageScope) storageKey = await storageScope;
+      if (closed || expectedEpoch !== epoch) { refreshAgain = !closed; return; }
+      const sent = token || saved(nextIdentity);
+      const answer = await options.transport!.post(`${endpoint}/api/replay/observability/config`, JSON.stringify({ ...value, ...(sent ? { token: sent } : {}), ...(apiKey ? { apiKey } : {}) })) as Record<string, unknown>;
       if (closed) return;
       const latest = metadata();
       // The account or device changed while the answer was on its way; it belongs to the old one.

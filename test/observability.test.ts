@@ -44,6 +44,79 @@ function fixture(overrides: Partial<ObservabilityOptions> = {}) {
   };
 }
 
+test('diagnostic ingestion sends its API key on config, errors, logs and exit beacons', async () => {
+  const f = fixture({ apiKey: ' diagnostic-ingestion-key ' });
+  const beacons: { url: string; body: Record<string, any> }[] = [];
+  f.options.transport!.beacon = (url, raw) => { beacons.push({ url, body: JSON.parse(raw) }); return true; };
+  const client = createObservability(f.options, f.runtime);
+  try {
+    await client.refresh();
+    client.captureException(new Error('error upload')); client.captureLog('warn', 'log upload');
+    await client.flush(); await client.refresh();
+    assert.deepEqual(new Set(f.posts.map((post) => post.url.split('/').pop())), new Set(['config', 'errors', 'logs']));
+    for (const post of f.posts) assert.equal(post.body.apiKey, 'diagnostic-ingestion-key');
+    client.captureLog('info', 'exit upload'); client.stop();
+    assert.equal(beacons.length, 1);
+    assert.equal(beacons[0].body.apiKey, 'diagnostic-ingestion-key');
+    assert.equal(beacons[0].body.events[0].message, 'exit upload');
+  } finally { client.stop(); }
+});
+
+test('diagnostics omit an absent or empty API key from legacy envelopes', async () => {
+  for (const apiKey of [undefined, '', '  ']) {
+    const f = fixture({ apiKey });
+    const client = createObservability(f.options, f.runtime);
+    try {
+      await client.refresh();
+      assert.deepEqual(f.posts[0].body, {
+        deviceId: 'device-one', accountId: '', authToken: '', platform: 'web', appVersion: '1', room: 'ROOM',
+      });
+      client.captureLog('info', 'legacy upload'); await client.flush();
+      const batch = f.posts.find((post) => post.url.endsWith('/logs'))!.body;
+      assert.deepEqual(Object.keys(batch), ['token', 'events']);
+    } finally { client.stop(); }
+  }
+});
+
+test('saved diagnostic credentials are isolated by ingestion key without storing the raw key', async () => {
+  const saved = new Map<string, string>();
+  const storage = { get: (key: string) => saved.get(key) ?? null, set: (key: string, value: string) => { saved.set(key, value); }, remove: (key: string) => { saved.delete(key); } };
+  const first = fixture({ apiKey: 'first-ingestion-key' });
+  const before = createObservability(first.options, { ...first.runtime, storage });
+  await before.refresh(); before.stop();
+  assert.equal(saved.size, 1);
+  assert.equal(Array.from(saved).some(([key, value]) => (key + value).includes('first-ingestion-key')), false);
+  const reload = fixture({ apiKey: 'first-ingestion-key' });
+  const after = createObservability(reload.options, { ...reload.runtime, storage });
+  await after.refresh(); after.stop();
+  assert.equal(reload.posts[0].body.token, token);
+  for (const apiKey of ['second-ingestion-key', undefined]) {
+    const other = fixture({ apiKey });
+    const stranger = createObservability(other.options, { ...other.runtime, storage });
+    await stranger.refresh(); stranger.stop();
+    assert.equal(other.posts[0].body.token, undefined);
+  }
+});
+
+test('keyed diagnostic credentials stay in memory when secure storage scoping is unavailable', async () => {
+  const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'crypto');
+  Object.defineProperty(globalThis, 'crypto', { value: undefined, configurable: true });
+  try {
+    const saved = new Map<string, string>();
+    const storage = { get: (key: string) => saved.get(key) ?? null, set: (key: string, value: string) => { saved.set(key, value); }, remove: (key: string) => { saved.delete(key); } };
+    const f = fixture({ apiKey: 'ingestion-key' });
+    const client = createObservability(f.options, { ...f.runtime, storage });
+    await client.refresh(); client.stop();
+    assert.equal(saved.size, 0);
+    const reload = fixture({ apiKey: 'ingestion-key' });
+    const after = createObservability(reload.options, { ...reload.runtime, storage });
+    await after.refresh(); after.stop();
+    assert.equal(reload.posts[0].body.token, undefined);
+  } finally {
+    if (descriptor) Object.defineProperty(globalThis, 'crypto', descriptor); else delete (globalThis as { crypto?: Crypto }).crypto;
+  }
+});
+
 test('explicit grouping keys survive sanitization, crowded attributes and beforeSend', async () => {
   const f = fixture({ sensitiveText: () => ['private-customer'], beforeSend: event => ({ ...event, message: 'Updated message' }) });
   const client = createObservability(f.options, f.runtime);

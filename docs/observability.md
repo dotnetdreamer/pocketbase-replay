@@ -77,6 +77,7 @@ device are dropped, and capture continues under the new one
 
 | Option | Default | Behavior |
 | --- | --- | --- |
+| `apiKey` | Absent | Optional ingestion key; required when **Require API key** is enabled in the dashboard |
 | `errors` | `false` | `true` enables manual exception capture; `{ captureUnhandled: true }` also collects browser `error` and `unhandledrejection` events |
 | `logs` | `false` | `true` enables manual log capture; `{ captureConsole: true }` also captures supported console methods, or pass an array of levels to select them |
 | `service` | Empty | Labels entries for filtering, such as `frontend`, `checkout` or `api` |
@@ -121,6 +122,11 @@ const diagnostics = startObservability({
 
 An empty endpoint or both client switches off makes the controller inactive
 
+Replay and diagnostics each accept `apiKey`; pass it to both controllers when
+the server requires a key. **Require a signed-in account** is independent and
+uses the same `accountId` and `authToken` metadata. Both requirements default
+off. See [ingestion security](authentication.md#optional-ingestion-requirements)
+
 ## Capacitor
 
 `start` accepts these options alongside its existing replay options. Only a
@@ -163,6 +169,12 @@ The dashboard saves one JSON object under the `observability` key in
 `replay_settings`. `GET` and `POST /api/replay/observability/settings` expose
 the same object to superusers
 
+The six rate fields below are also available in **Upload security**, under
+**Rate limits**, and through `GET` and `POST /api/replay/security/limits` in
+the `observability` group. Both panels use the same saved values. **Save
+limits** applies changes; **Use default limits** fills the form and takes
+effect only after saving. Replay limits are separate
+
 | Key | Allowed values | Default |
 | --- | --- | --- |
 | `errors_enabled` | Boolean | `false` |
@@ -189,11 +201,26 @@ and config requests read the settings from memory, so a change made directly
 to the `replay_settings` row takes up to five seconds. Clients refresh their
 configuration every 45 seconds
 
+Limits stay enabled even when the API key and account requirements are off.
+Saving them applies immediately, keeps current usage counters and leaves
+feature switches, privacy, retention and daily storage budgets unchanged.
+Requests and new-credential limits accept positive whole numbers up to
+1000000; the IP byte allowance accepts 1 to 1048576 MiB. The dashboard labels
+this allowance MB, with each unit meaning 1024 × 1024 bytes
+
 Session limits count newly issued credentials. Renewing the same credential
 does not consume another session. Configuration requests have their own
 minute limit; the upload request limit applies separately to errors and logs.
 The IP upload allowance is shared by both. MB values mean 1024 × 1024 bytes.
 Older settings and dashboard saves retain omitted values
+
+Users behind the same IP share these limits. Configure
+[trusted proxy headers](installation.md#behind-a-reverse-proxy) so PocketBase
+sees each client's address. Request and per-IP byte counters reset at their
+fixed minute/hour boundaries or on a server restart; new-credential counts
+cover stored credentials created in the preceding hour and survive restarts.
+See [the limits API](configuration.md#limits-api) for partial updates and
+[counter constraints](privacy-and-limits.md#counter-windows-and-restarts)
 
 ## Issues and alerts
 
@@ -265,6 +292,11 @@ Custom senders can use the same API as the SDK:
 2. `POST /api/replay/errors` or `POST /api/replay/logs` with
    `{ "token": "...", "events": [ ... ] }`
 
+When **Require API key** is on, include `apiKey` in each config and upload
+body, alongside the upload token. It is an ingestion key, separate from
+`authToken`, which verifies a user's account. **Require a signed-in account**
+refuses anonymous admission and uploads from existing anonymous credentials
+
 Every entry needs a stable `id`, a Unix millisecond `timestamp` and a nonempty
 `message`. Errors also accept `name`, `stack`, `handled` and severity; logs
 accept any supported severity. Both accept `service`, `room`, JSON
@@ -316,6 +348,10 @@ failures and exhausted retries discard affected entries. An entry over 16 KiB
 loses its attributes, then the end of its stack and message, instead of being
 discarded. `stop()` discards anything still queued; call `flush()` first when
 delivery matters
+
+Saved credentials are scoped to the endpoint and ingestion key. The SDK
+uses a SHA-256 fingerprint in the storage name and does not store the raw API
+key. If WebCrypto is unavailable, keyed credentials stay in memory
 
 The server bounds request size, event count, per-IP traffic, credential
 creation, and daily stored bytes. A periodic sweep removes expired entries

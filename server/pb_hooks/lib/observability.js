@@ -1,6 +1,7 @@
 const base = require('./replay-core.js');
 const core = require('./observability-core.js');
 const replay = require('./replay.js');
+const security = require('./ingestion-security.js');
 
 const VOLUME_STEPS = [60000, 300000, 900000, 1800000, 3600000, 10800000, 21600000, 43200000, 86400000, 604800000];
 
@@ -144,13 +145,18 @@ function publicConfig(e) {
   const cfg = cachedConfig(e.app);
   rate(e, 'config', cfg.config_requests_per_ip_minute);
   const body = readBody(e);
+  const admission = security.check(e.app, body);
   const meta = base.metadata(body);
+  if (admission.requireAccount) {
+    meta.accountId = replay.account(e.app, meta);
+    security.requireAccount(admission, meta.accountId);
+  }
   const result = {
     enabled: false, errorsEnabled: false, logsEnabled: false,
     uploadIntervalMs: core.LIMITS.uploadIntervalMs, maxBatchEvents: core.LIMITS.batchEvents,
   };
   if (!cfg.errors_enabled && !cfg.logs_enabled) return result;
-  meta.accountId = replay.account(e.app, meta);
+  if (!admission.requireAccount) meta.accountId = replay.account(e.app, meta);
   if (replay.isForgotten(e.app, meta.accountId)) return result;
   const current = base.text(body.token, 'token', 64, false);
   if (current && !/^[A-Za-z0-9]{64}$/.test(current)) base.fail(401, 'Invalid observability token');
@@ -159,6 +165,7 @@ function publicConfig(e) {
   let token = current;
   let context;
   e.app.runInTransaction(function (tx) {
+    security.check(tx, body, meta.accountId);
     if (replay.isForgotten(tx, meta.accountId)) return;
     result.errorsEnabled = cfg.errors_enabled;
     result.logsEnabled = cfg.logs_enabled;
@@ -224,7 +231,9 @@ function ingestion(e, kind) {
   const cfg = cachedConfig(e.app);
   rate(e, kind, cfg.upload_requests_per_ip_minute);
   const now = Date.now();
-  const value = core.batch(readBody(e), kind, now);
+  const body = readBody(e);
+  security.check(e.app, body);
+  const value = core.batch(body, kind, now);
   const spend = ipBudget(e, core.bytes(JSON.stringify(value.events)), cfg.upload_mb_per_ip_hour * 1024 * 1024);
   let accepted = 0;
   let duplicates = 0;
@@ -235,6 +244,7 @@ function ingestion(e, kind) {
   e.app.runInTransaction(function (tx) {
     let context;
     try { context = tx.findFirstRecordByData('replay_observability_sessions', 'tokenHash', $security.sha256(value.token)); } catch (_) { base.fail(401, 'Invalid observability token'); }
+    security.check(tx, body, context.getString('accountId'));
     if (context.getFloat('expiresAt') <= now) base.fail(410, 'Observability session expired');
     if (!(kind === 'error' ? cfg.errors_enabled : cfg.logs_enabled) || replay.isForgotten(tx, context.getString('accountId'))) base.fail(403, 'Observability is disabled');
     const accountId = context.getString('accountId');

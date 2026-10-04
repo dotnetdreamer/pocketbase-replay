@@ -27,9 +27,9 @@ let checks = 0;
 const check = (label, fn) => { fn(); checks++; console.log(`PASS ${label}`); };
 const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
-async function request(path, body, token = '', method = body === undefined ? 'GET' : 'POST', status = 200) {
+async function request(path, body, token = '', method = body === undefined ? 'GET' : 'POST', status = 200, headers = {}) {
   const response = await fetch(endpoint + path, {
-    method, headers: { 'Content-Type': path.startsWith('/api/collections') ? 'application/json' : 'text/plain;charset=UTF-8', ...(token ? { Authorization: token } : {}) },
+    method, headers: { 'Content-Type': path.startsWith('/api/collections') ? 'application/json' : 'text/plain;charset=UTF-8', ...(token ? { Authorization: token } : {}), ...headers },
     body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(10000),
   });
   const data = await response.json();
@@ -37,10 +37,8 @@ async function request(path, body, token = '', method = body === undefined ? 'GE
   return data;
 }
 
-try {
-  execFileSync(process.execPath, [join(root, 'scripts/install.mjs'), '--target', work], { stdio: 'pipe' });
-  execFileSync(resolve(binary), ['superuser', 'upsert', identity, password, '--dir', join(work, 'pb_data')], { cwd: work, stdio: 'pipe' });
-  server = spawn(resolve(binary), ['serve', `--http=127.0.0.1:${port}`, '--dir', join(work, 'pb_data')], { cwd: work, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, REPLAY_AUTH_URL: '', REPLAY_ERASE_KEY: eraseKey, REPLAY_AUTH_COLLECTION: 'observability_test_users' } });
+async function startPocketBase() {
+  server = spawn(resolve(binary), ['serve', `--http=127.0.0.1:${port}`, '--dir', join(work, 'pb_data')], { cwd: work, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, REPLAY_AUTH_URL: '', REPLAY_ERASE_KEY: eraseKey, REPLAY_AUTH_COLLECTION: 'observability_test_users', REPLAY_TRUSTED_PROXY: 'X-Replay-Test-IP' } });
   for (const stream of [server.stdout, server.stderr]) stream.on('data', data => { output = (output + data).slice(-30000); });
   const deadline = Date.now() + 15000;
   for (;;) {
@@ -52,6 +50,12 @@ try {
     if (Date.now() > deadline) throw new Error('PocketBase did not start: ' + output);
     await wait(100);
   }
+}
+
+try {
+  execFileSync(process.execPath, [join(root, 'scripts/install.mjs'), '--target', work], { stdio: 'pipe' });
+  execFileSync(resolve(binary), ['superuser', 'upsert', identity, password, '--dir', join(work, 'pb_data')], { cwd: work, stdio: 'pipe' });
+  await startPocketBase();
   const received = [];
   hooks = createServer((req, res) => {
     let body = '';
@@ -64,12 +68,27 @@ try {
   const admin = (await request('/api/collections/_superusers/auth-with-password', { identity, password })).token;
   const settingsPath = '/api/replay/observability/settings';
   const configPath = '/api/replay/observability/config';
+  const securityPath = '/api/replay/security';
+  const limitsPath = securityPath + '/limits';
   const meta = { deviceId: 'observability-e2e-device', platform: 'web', appVersion: '1.0.0', room: 'TEST1' };
+  const initialSecurity = await request(securityPath, undefined, admin);
+  check('ingestion security is optional and defaults to accepting legacy clients', () => {
+    assert.deepEqual(initialSecurity, { requireApiKey: false, requireAccount: false, keys: [] });
+  });
+  const initialLimits = await request(limitsPath, undefined, admin);
+  check('the limits panel reports the existing replay and diagnostics defaults', () => {
+    assert.deepEqual(initialLimits, {
+      replay: { config_requests_per_ip_minute: 120, start_requests_per_ip_minute: 30, upload_requests_per_ip_minute: 240,
+        upload_mb_per_ip_hour: 64, sessions_per_device_hour: 12, sessions_per_ip_hour: 120, sessions_per_hour: 3000 },
+      observability: { config_requests_per_ip_minute: 120, upload_requests_per_ip_minute: 120, upload_mb_per_ip_hour: 8,
+        sessions_per_device_hour: 30, sessions_per_ip_hour: 120, sessions_per_hour: 20000 },
+    });
+  });
   const initial = await request(settingsPath, undefined, admin);
   check('new features default off', () => { assert.equal(initial.errors_enabled, false); assert.equal(initial.logs_enabled, false); });
   const disabled = await request(configPath, meta);
   check('disabled configuration creates no upload credential', () => { assert.equal(disabled.errorsEnabled, false); assert.equal(disabled.logsEnabled, false); assert.ok(!disabled.token); });
-  for (const path of [settingsPath, '/api/replay/issues', '/api/replay/logs', '/api/replay/alerts']) await request(path, undefined, '', 'GET', 401);
+  for (const path of [settingsPath, securityPath, '/api/replay/issues', '/api/replay/logs', '/api/replay/alerts']) await request(path, undefined, '', 'GET', 401);
   check('all dashboard reads require a superuser', () => assert.ok(true));
 
   const settings = { errors_enabled: true, logs_enabled: true, alerts_enabled: true, errors_retention_days: 30, logs_retention_days: 14, daily_limit_mb: 64,
@@ -313,6 +332,266 @@ try {
     await request('/api/collections/replay_settings/records/' + budgetRow.id, { value: JSON.stringify({ at: Date.now(), bytes: finalTotal }) }, admin, 'PATCH');
     await request(settingsPath, settings, admin);
   }
+
+  const securityMeta = { ...meta, deviceId: 'ingestion-security-device' };
+  const legacyRecording = await request('/api/replay/start', securityMeta);
+  const legacyContext = await request(configPath, securityMeta);
+  const chunkFor = (session, seq, apiKey) => ({ sessionId: session.sessionId, token: session.token, seq,
+    startedAt: timestamp, endedAt: timestamp + 1, room: 'TEST1', encoding: 'gzip-base64',
+    data: Buffer.from(gzipSync(raw)).toString('base64'), rawBytes: raw.length, eventCount: snapshot.length,
+    hasSnapshot: true, ...(apiKey ? { apiKey } : {}) });
+  const diagnosticFor = (context, kind, id, apiKey) => ({ token: context.token,
+    events: [{ ...(kind === 'errors' ? error : log), id, service: 'security-e2e' }], ...(apiKey ? { apiKey } : {}) });
+  const diagnosticUpload = (context, id, apiKey, status = 200) => Promise.all(['errors', 'logs'].map(kind =>
+    request('/api/replay/' + kind, diagnosticFor(context, kind, id + '-' + kind, apiKey), '', 'POST', status)));
+  const safeSecurity = (value, secrets = []) => {
+    assert.deepEqual(Object.keys(value).sort(), ['keys', 'requireAccount', 'requireApiKey']);
+    for (const key of value.keys) assert.deepEqual(Object.keys(key).sort(), ['createdAt', 'id', 'label', 'prefix']);
+    for (const secret of secrets) assert.ok(!JSON.stringify(value).includes(secret));
+  };
+  const setSecurity = (requireApiKey, requireAccount) => request(securityPath, { requireApiKey, requireAccount }, admin);
+
+  for (const credential of ['', auth.token]) {
+    const status = credential ? 403 : 401;
+    await request(securityPath, undefined, credential, 'GET', status);
+    await request(securityPath, { requireApiKey: false, requireAccount: false }, credential, 'POST', status);
+    await request(securityPath + '/keys', { label: 'Unauthorized key' }, credential, 'POST', status);
+    await request(securityPath + '/keys/' + 'x'.repeat(24), undefined, credential, 'DELETE', status);
+  }
+  check('anonymous clients and ordinary accounts cannot manage ingestion security or keys', () => assert.ok(true));
+  await request(securityPath, { requireApiKey: true, requireAccount: false }, admin, 'POST', 400);
+  const afterRejectedEnable = await request(securityPath, undefined, admin);
+  check('a missing key cannot accidentally lock out ingestion', () => {
+    assert.deepEqual(afterRejectedEnable, initialSecurity);
+    assert.equal(legacyRecording.enabled, true);
+    assert.equal(legacyContext.enabled, true);
+  });
+
+  const firstKey = await request(securityPath + '/keys', { label: 'Browser fixture' }, admin);
+  const keySettings = await request(securityPath, undefined, admin);
+  check('key creation reveals the secret once and subsequent reads expose only safe metadata', () => {
+    assert.match(firstKey.apiKey, /^pbr_[A-Za-z0-9]{64}$/);
+    assert.equal(firstKey.key.label, 'Browser fixture');
+    assert.equal(firstKey.key.prefix, firstKey.apiKey.slice(0, 12));
+    assert.deepEqual(keySettings.keys, [firstKey.key]);
+    safeSecurity(keySettings, [firstKey.apiKey]);
+  });
+  const enabledSecurity = await setSecurity(true, false);
+  safeSecurity(enabledSecurity, [firstKey.apiKey]);
+  for (const apiKey of [undefined, 'pbr_' + 'X'.repeat(64)]) {
+    const body = { ...securityMeta, ...(apiKey ? { apiKey } : {}) };
+    for (const path of ['/api/replay/config', '/api/replay/start', configPath]) await request(path, body, '', 'POST', 401);
+    await request('/api/replay/chunks', chunkFor(legacyRecording, 0, apiKey), '', 'POST', 401);
+    await diagnosticUpload(legacyContext, 'invalid-api-key', apiKey, 401);
+  }
+  check('enabling API keys immediately protects all configuration, credential and upload routes', () => assert.ok(true));
+  const securedMeta = { ...securityMeta, apiKey: firstKey.apiKey };
+  assert.equal((await request('/api/replay/config', securedMeta)).enabled, true);
+  const securedRecording = await request('/api/replay/start', securedMeta);
+  const securedContext = await request(configPath, securedMeta);
+  await request('/api/replay/chunks', chunkFor(securedRecording, 0, firstKey.apiKey));
+  const securedUploads = await diagnosticUpload(securedContext, 'valid-api-key', firstKey.apiKey);
+  await request('/api/replay/chunks', chunkFor(legacyRecording, 0, firstKey.apiKey));
+  await diagnosticUpload(legacyContext, 'legacy-with-api-key', firstKey.apiKey);
+  check('a valid API key permits recording, errors and logs, including earlier credentials', () => {
+    assert.equal(securedRecording.enabled, true);
+    assert.equal(securedContext.enabled, true);
+    assert.ok(securedUploads.every(result => result.accepted === 1));
+  });
+
+  const replacementKey = await request(securityPath + '/keys', { label: 'Rotation fixture' }, admin);
+  const revoked = await request(securityPath + '/keys/' + firstKey.key.id, undefined, admin, 'DELETE');
+  safeSecurity(revoked, [firstKey.apiKey, replacementKey.apiKey]);
+  await request('/api/replay/chunks', chunkFor(securedRecording, 1, firstKey.apiKey), '', 'POST', 401);
+  await diagnosticUpload(securedContext, 'revoked-api-key', firstKey.apiKey, 401);
+  for (const path of ['/api/replay/config', '/api/replay/start', configPath]) await request(path, securedMeta, '', 'POST', 401);
+  await request('/api/replay/chunks', chunkFor(securedRecording, 1, replacementKey.apiKey));
+  await diagnosticUpload(securedContext, 'rotated-api-key', replacementKey.apiKey);
+  await request(securityPath + '/keys/' + replacementKey.key.id, undefined, admin, 'DELETE', 400);
+  check('revocation immediately refuses existing uploads while another key supports rotation', () => {
+    assert.deepEqual(revoked.keys, [replacementKey.key]);
+  });
+
+  await setSecurity(false, false);
+  const restoredConfig = await request('/api/replay/config', securityMeta);
+  const restoredRecording = await request('/api/replay/start', { ...securityMeta, deviceId: 'security-disabled-device' });
+  const restoredContext = await request(configPath, { ...securityMeta, deviceId: 'security-disabled-device' });
+  await request('/api/replay/chunks', chunkFor(securedRecording, 2));
+  await diagnosticUpload(securedContext, 'security-disabled');
+  const withoutKeys = await request(securityPath + '/keys/' + replacementKey.key.id, undefined, admin, 'DELETE');
+  check('disabling API keys restores legacy ingestion and permits revoking the last key', () => {
+    assert.equal(restoredConfig.enabled, true);
+    assert.equal(restoredRecording.enabled, true);
+    assert.equal(restoredContext.enabled, true);
+    assert.deepEqual(withoutKeys, initialSecurity);
+  });
+
+  const securityUser = await request('/api/collections/observability_test_users/records', {
+    email: 'security@local.test', password: 'local-security-test-123', passwordConfirm: 'local-security-test-123',
+  }, admin);
+  const securityAuth = await request('/api/collections/observability_test_users/auth-with-password', {
+    identity: 'security@local.test', password: 'local-security-test-123',
+  });
+  const verifiedMeta = { ...securityMeta, deviceId: 'verified-security-device', accountId: securityUser.id, authToken: securityAuth.token };
+  const accountRecording = await request('/api/replay/start', verifiedMeta);
+  const verifiedContext = await request(configPath, verifiedMeta);
+  const accountsOnly = await setSecurity(false, true);
+  for (const path of ['/api/replay/config', '/api/replay/start', configPath]) {
+    await request(path, securityMeta, '', 'POST', 401);
+    await request(path, { ...securityMeta, accountId: securityUser.id }, '', 'POST', 401);
+  }
+  await request('/api/replay/chunks', chunkFor(restoredRecording, 0), '', 'POST', 401);
+  await diagnosticUpload(restoredContext, 'anonymous-account-required', undefined, 401);
+  const verifiedReplayConfig = await request('/api/replay/config', verifiedMeta);
+  const renewedAccountContext = await request(configPath, { ...verifiedMeta, token: verifiedContext.token });
+  const verifiedRecording = await request('/api/replay/start', verifiedMeta);
+  await request('/api/replay/chunks', chunkFor(accountRecording, 0));
+  await request('/api/replay/chunks', chunkFor(verifiedRecording, 0));
+  const verifiedUploads = await diagnosticUpload(verifiedContext, 'verified-account-required');
+  check('verified-account enforcement works independently and refuses earlier anonymous credentials', () => {
+    assert.equal(accountsOnly.requireApiKey, false);
+    assert.deepEqual(accountsOnly.keys, []);
+    assert.equal(verifiedReplayConfig.enabled, true);
+    assert.equal(renewedAccountContext.token, verifiedContext.token);
+    assert.ok(verifiedUploads.every(result => result.accepted === 1));
+  });
+
+  const combinedKey = await request(securityPath + '/keys', { label: 'Account and key fixture' }, admin);
+  await setSecurity(true, true);
+  await request(configPath, verifiedMeta, '', 'POST', 401);
+  await request(configPath, { ...securityMeta, apiKey: combinedKey.apiKey }, '', 'POST', 401);
+  const combined = await request(configPath, { ...verifiedMeta, token: verifiedContext.token, apiKey: combinedKey.apiKey });
+  await request('/api/replay/chunks', chunkFor(verifiedRecording, 1, combinedKey.apiKey));
+  await diagnosticUpload(combined, 'account-and-api-key', combinedKey.apiKey);
+  check('both optional protections can be enabled together', () => assert.equal(combined.enabled, true));
+  await setSecurity(false, false);
+  await request('/api/replay/chunks', chunkFor(restoredRecording, 0));
+  await diagnosticUpload(restoredContext, 'account-requirement-disabled');
+  const finalSecurity = await request(securityPath + '/keys/' + combinedKey.key.id, undefined, admin, 'DELETE');
+  check('turning off account enforcement restores uploads from existing anonymous credentials', () => {
+    assert.deepEqual(finalSecurity, initialSecurity);
+  });
+
+  const savedLimits = await request(limitsPath, undefined, admin);
+  const savedRecordingSettings = await request('/api/replay/settings', undefined, admin);
+  const savedDiagnosticSettings = await request(settingsPath, undefined, admin);
+  for (const credential of ['', auth.token]) {
+    const status = credential ? 403 : 401;
+    await request(limitsPath, undefined, credential, 'GET', status);
+    await request(limitsPath, { replay: { sessions_per_device_hour: 12 } }, credential, 'POST', status);
+  }
+  check('only superusers can read or change upload limits', () => assert.ok(true));
+  for (const body of [
+    {}, { replay: {} }, { unknown: {} }, { replay: null },
+    { replay: { config_requests_per_ip_minute: 0 } },
+    { replay: { start_requests_per_ip_minute: 1.5 } },
+    { replay: { unknown_limit: 1 } },
+    { observability: { upload_requests_per_ip_minute: '5' } },
+    { observability: { start_requests_per_ip_minute: 1 } },
+    { replay: { upload_mb_per_ip_hour: 1048577 } },
+    { replay: { sessions_per_device_hour: 2 }, observability: { sessions_per_ip_hour: 0 } },
+  ]) {
+    await request(limitsPath, body, admin, 'POST', 400);
+    assert.deepEqual(await request(limitsPath, undefined, admin), savedLimits);
+  }
+  check('invalid limit updates reject the complete change without altering either group', () => assert.ok(true));
+
+  try {
+    // Documentation-only addresses give each probe its own counters in this isolated fixture.
+    const replayHeaders = { 'X-Replay-Test-IP': '198.51.100.41' };
+    const sessionHeaders = { 'X-Replay-Test-IP': '198.51.100.42' };
+    const diagnosticsHeaders = { 'X-Replay-Test-IP': '198.51.100.43' };
+    const liveRequest = (path, body, headers, status = 200) => request(path, body, '', 'POST', status, headers);
+    const limitMeta = { ...meta, deviceId: 'replay-request-limit-device' };
+    const remainingMinute = 60000 - Date.now() % 60000;
+    if (remainingMinute < 10000) await wait(remainingMinute + 20);
+    const rateMinute = Math.floor(Date.now() / 60000);
+    const lowRequests = { config_requests_per_ip_minute: 2, start_requests_per_ip_minute: 2, upload_requests_per_ip_minute: 2 };
+    const partial = await request(limitsPath, { replay: lowRequests }, admin);
+    check('partial limit updates preserve omitted fields, the other group and recording settings', () => {
+      assert.deepEqual(partial, { replay: { ...savedLimits.replay, ...lowRequests }, observability: savedLimits.observability });
+    });
+    assert.deepEqual(await request('/api/replay/settings', undefined, admin), savedRecordingSettings);
+    for (let i = 0; i < 2; i++) await liveRequest('/api/replay/config', limitMeta, replayHeaders);
+    await liveRequest('/api/replay/config', limitMeta, replayHeaders, 429);
+    const limitedRecording = await liveRequest('/api/replay/start', limitMeta, replayHeaders);
+    await liveRequest('/api/replay/start', limitMeta, replayHeaders);
+    await liveRequest('/api/replay/start', limitMeta, replayHeaders, 429);
+    await liveRequest('/api/replay/chunks', chunkFor(limitedRecording, 0), replayHeaders);
+    await liveRequest('/api/replay/chunks', chunkFor(limitedRecording, 1), replayHeaders);
+    await liveRequest('/api/replay/chunks', chunkFor(limitedRecording, 2), replayHeaders, 429);
+    check('saved replay limits independently guard real configuration, starts and chunk uploads', () => assert.ok(true));
+
+    await request(limitsPath, { replay: { config_requests_per_ip_minute: 3, start_requests_per_ip_minute: 3, upload_requests_per_ip_minute: 3 } }, admin);
+    await liveRequest('/api/replay/config', limitMeta, replayHeaders);
+    await liveRequest('/api/replay/config', limitMeta, replayHeaders, 429);
+    await liveRequest('/api/replay/start', limitMeta, replayHeaders);
+    await liveRequest('/api/replay/start', limitMeta, replayHeaders, 429);
+    await liveRequest('/api/replay/chunks', chunkFor(limitedRecording, 2), replayHeaders);
+    await liveRequest('/api/replay/chunks', chunkFor(limitedRecording, 3), replayHeaders, 429);
+    check('raising replay limits resumes requests without resetting accumulated counters', () => {
+      assert.equal(Math.floor(Date.now() / 60000), rateMinute);
+    });
+    await request(limitsPath, { replay: savedLimits.replay }, admin);
+
+    const deviceMeta = { ...meta, deviceId: 'replay-device-limit-device' };
+    await liveRequest('/api/replay/start', deviceMeta, sessionHeaders);
+    await request(limitsPath, { replay: { sessions_per_device_hour: 1 } }, admin);
+    await liveRequest('/api/replay/start', deviceMeta, sessionHeaders, 429);
+    await liveRequest('/api/replay/start', { ...deviceMeta, deviceId: 'other-replay-limit-device' }, sessionHeaders);
+    await request(limitsPath, { replay: { sessions_per_device_hour: 2 } }, admin);
+    await liveRequest('/api/replay/start', deviceMeta, sessionHeaders);
+    await liveRequest('/api/replay/start', deviceMeta, sessionHeaders, 429);
+    check('lowering a replay device limit counts existing sessions and keeps other devices independent', () => assert.ok(true));
+    await request(limitsPath, { replay: savedLimits.replay }, admin);
+
+    const diagnosticMeta = { ...meta, deviceId: 'diagnostic-panel-limit-device' };
+    const diagnosticContext = await liveRequest(configPath, diagnosticMeta, diagnosticsHeaders);
+    const diagnosticChanges = { config_requests_per_ip_minute: 1, upload_requests_per_ip_minute: 1, sessions_per_device_hour: 1 };
+    const editedAt = Date.now();
+    await request(limitsPath, { observability: diagnosticChanges }, admin);
+    await liveRequest(configPath, { ...diagnosticMeta, token: diagnosticContext.token }, diagnosticsHeaders, 429);
+    check('diagnostic limits replace the live configuration cache immediately', () => {
+      assert.ok(Date.now() - editedAt < 5000);
+    });
+    await request(limitsPath, { observability: { config_requests_per_ip_minute: 2 } }, admin);
+    const renewedDiagnostic = await liveRequest(configPath, { ...diagnosticMeta, token: diagnosticContext.token }, diagnosticsHeaders);
+    await liveRequest(configPath, { ...diagnosticMeta, token: diagnosticContext.token }, diagnosticsHeaders, 429);
+    for (const kind of ['errors', 'logs']) {
+      await liveRequest('/api/replay/' + kind, diagnosticFor(diagnosticContext, kind, 'limited-first-' + kind), diagnosticsHeaders);
+      await liveRequest('/api/replay/' + kind, diagnosticFor(diagnosticContext, kind, 'limited-second-' + kind), diagnosticsHeaders, 429);
+    }
+    await request(limitsPath, { observability: { upload_requests_per_ip_minute: 2 } }, admin);
+    for (const kind of ['errors', 'logs']) {
+      await liveRequest('/api/replay/' + kind, diagnosticFor(diagnosticContext, kind, 'limited-second-' + kind), diagnosticsHeaders);
+      await liveRequest('/api/replay/' + kind, diagnosticFor(diagnosticContext, kind, 'limited-third-' + kind), diagnosticsHeaders, 429);
+    }
+    await request(limitsPath, { observability: { config_requests_per_ip_minute: savedLimits.observability.config_requests_per_ip_minute } }, admin);
+    await liveRequest(configPath, diagnosticMeta, diagnosticsHeaders, 429);
+    await liveRequest(configPath, { ...diagnosticMeta, token: diagnosticContext.token }, diagnosticsHeaders);
+    check('diagnostic request counters and device limits change without disrupting credential renewal', () => {
+      assert.equal(renewedDiagnostic.token, diagnosticContext.token);
+    });
+    const currentDiagnosticChanges = { ...diagnosticChanges, config_requests_per_ip_minute: savedLimits.observability.config_requests_per_ip_minute, upload_requests_per_ip_minute: 2 };
+    const diagnosticSettingsAfterLimits = await request(settingsPath, undefined, admin);
+    check('the limits panel updates canonical diagnostic settings while preserving feature, retention and storage settings', () => {
+      assert.deepEqual(diagnosticSettingsAfterLimits, { ...savedDiagnosticSettings, ...currentDiagnosticChanges });
+    });
+
+    const persisted = await request(limitsPath, { replay: { upload_mb_per_ip_hour: 63, sessions_per_hour: 2999 }, observability: { upload_mb_per_ip_hour: 7, sessions_per_hour: 19999 } }, admin);
+    server.kill('SIGTERM');
+    await once(server, 'exit');
+    await startPocketBase();
+    const afterRestart = await request(limitsPath, undefined, admin);
+    check('both limit groups persist across a real PocketBase restart', () => assert.deepEqual(afterRestart, persisted));
+  } finally {
+    await request(limitsPath, savedLimits, admin);
+    assert.deepEqual(await request(limitsPath, undefined, admin), savedLimits);
+    assert.deepEqual(await request('/api/replay/settings', undefined, admin), savedRecordingSettings);
+    assert.deepEqual(await request(settingsPath, undefined, admin), savedDiagnosticSettings);
+    assert.deepEqual(await request(securityPath, undefined, admin), finalSecurity);
+  }
+  check('integration checks restore recording, diagnostic, security and limit settings for the dashboard fixture', () => assert.ok(true));
 
   console.log(`Observability integration passed: ${checks} checks`);
   if (process.argv.includes('--serve')) {

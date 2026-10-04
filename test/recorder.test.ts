@@ -123,6 +123,38 @@ function texts(chunk: ReplayChunk): string[] {
   return events(chunk).flatMap((event) => (event.data.texts as { value: string }[] | undefined ?? []).map((text) => text.value));
 }
 
+test('an ingestion key accompanies config, start, regular chunks and page-exit chunks', async () => {
+  const h = harness({ options: { apiKey: ' replay-ingestion-key ' } });
+  try {
+    await settle();
+    h.emit('first upload');
+    await h.controller.flush();
+    h.emit('exit upload');
+    h.activity(false, true);
+    assert.deepEqual(h.requests.map((request) => request.url.split('/').pop()), ['config', 'start', 'chunks']);
+    for (const request of h.requests) assert.equal(JSON.parse(request.body).apiKey, 'replay-ingestion-key');
+    assert.equal(h.beacons.length, 1);
+    assert.equal(h.beacons[0].apiKey, 'replay-ingestion-key');
+    assert.deepEqual(texts(h.beacons[0]), ['exit upload']);
+  } finally { h.controller.stop(); }
+});
+
+test('an omitted or empty ingestion key leaves legacy request envelopes unchanged', async () => {
+  for (const apiKey of [undefined, '', '  ']) {
+    const h = harness({ options: { apiKey } });
+    try {
+      await settle();
+      await h.controller.flush();
+      assert.deepEqual(JSON.parse(h.requests[0].body), {
+        deviceId: 'device-one', accountId: '', platform: 'web', appVersion: '1.0', room: '', authToken: '',
+      });
+      for (const request of h.requests) assert.equal('apiKey' in JSON.parse(request.body), false);
+      h.emit('exit upload'); h.activity(false, true);
+      assert.equal('apiKey' in h.beacons[0], false);
+    } finally { h.controller.stop(); }
+  }
+});
+
 test('replay correlation returns a detached context only for the current live identity', async () => {
   const h = harness();
   assert.equal(h.controller.getSessionContext(), null);

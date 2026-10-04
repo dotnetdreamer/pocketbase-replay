@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { autoLifecycle, nativeTransport, pageVisible } from '../src/detect';
-import { ReplayHttpError, startReplay } from '../src/index';
+import { ReplayHttpError, startObservability, startReplay } from '../src/index';
 import type { ReplayController, ReplayMetadata, ReplayOptions } from '../src/types';
 
 type Listener = () => void;
@@ -66,6 +66,30 @@ function fakeApp() {
 }
 
 const phone = (platform: string, plugins: Record<string, unknown>) => ({ getPlatform: () => platform, Plugins: plugins });
+
+test('API keys survive automatic native transport for replay and diagnostics', async () => {
+  for (const platform of ['android', 'ios']) {
+    const calls: { url: string; data: string }[] = [];
+    const http = { post: async (request: { url: string; data: string }) => {
+      calls.push(request);
+      return { status: 200, data: request.url.includes('/observability/config')
+        ? { enabled: true, errorsEnabled: true, logsEnabled: true, token: 't'.repeat(64), expiresIn: 14400000 }
+        : { enabled: false } };
+    } };
+    await withGlobals({ Capacitor: phone(platform, { CapacitorHttp: http }) }, async () => {
+      await running({ endpoint: 'https://replay.test', metadata, apiKey: 'native-ingestion-key' }, async () => {
+        const diagnostics = startObservability({ endpoint: 'https://replay.test', metadata, apiKey: 'native-ingestion-key', errors: true, logs: true });
+        try {
+          await diagnostics.refresh();
+          diagnostics.captureException(new Error('native error')); diagnostics.captureLog('info', 'native log');
+          await diagnostics.flush();
+          for (const call of calls) assert.equal(JSON.parse(call.data).apiKey, 'native-ingestion-key');
+          assert.deepEqual(new Set(calls.map((call) => call.url.split('/').pop())), new Set(['config', 'errors', 'logs']));
+        } finally { diagnostics.stop(); }
+      });
+    });
+  }
+});
 
 test('a phone posts through CapacitorHttp as text, parses string bodies and reports HTTP status', async () => {
   const calls: Record<string, unknown>[] = [];

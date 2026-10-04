@@ -64,6 +64,23 @@ function plugin(platform: string, client: Client, native = fakeNative().native, 
   return createPlugin({ platform: () => platform, nativeAvailable: () => available, native, loadClient: async () => client });
 }
 
+test('API keys pass through combined and independent starts on every supported platform', async () => {
+  for (const platform of ['web', 'android', 'ios']) {
+    const f = fakeClient();
+    const replay = plugin(platform, f.client);
+    await replay.start({ ...options, apiKey: 'combined-key', errors: true, logs: true });
+    assert.equal(f.started[0].apiKey, 'combined-key');
+    assert.equal(f.observabilityStarted[0].apiKey, 'combined-key');
+    await replay.startObservability({ ...options, apiKey: 'diagnostic-key', errors: true });
+    assert.equal(f.observabilityStarted[1].apiKey, 'diagnostic-key');
+    await replay.start({ ...options, apiKey: 'replay-key' });
+    assert.equal(f.started[1].apiKey, 'replay-key');
+    assert.equal(f.observabilityStarted.length, 2);
+    assert.equal(f.captures[1].stopped, 0);
+    await replay.stop();
+  }
+});
+
 test('on the web, start passes the options through and leaves pause and resume to the client', async () => {
   const { started, client } = fakeClient();
   const { native, listeners } = fakeNative();

@@ -2,12 +2,87 @@
 
 [Back to README](../README.md)
 
+## Upload security
+
+Open **Upload security** in the dashboard to manage named ingestion keys
+and the independent **Require API key** and **Require a signed-in account**
+switches. Both default off and apply to replay, errors and logs
+
+Create a key, configure the SDK's optional `apiKey` and update all senders
+before enabling the key requirement. Verified accounts use the existing
+`accountId` and `authToken` metadata and local or remote account verification
+
+Each key can be revoked separately. Keys allow submission only; viewing data
+and managing security always require a superuser. Key names do not provide
+separate projects or storage budgets
+
+See [ingestion security and its management API](authentication.md#optional-ingestion-requirements)
+for setup, rotation and the limits of public client keys
+
+### Rate limits
+
+In **Upload security**, expand **Rate limits** to adjust replay and error/log
+limits separately. Use **Save limits** to apply them. **Use default limits**
+fills the form with the defaults below; it changes the server only after you
+save. Saving limits does not save changes to the API key or account switches
+
+Limits are always enabled, including when both security switches are off.
+Values must be positive whole numbers. Saved changes apply to the next
+request and keep the usage already counted. Raising a limit can allow more
+traffic in the current window; lowering it can refuse further requests with
+429 until usage drops below the new limit
+
+| API field | Replay default | Errors and logs default | Allowed values |
+| --- | --- | --- | --- |
+| `config_requests_per_ip_minute` | `120` | `120` | 1 to 1000000 |
+| `start_requests_per_ip_minute` | `30` | Not used | 1 to 1000000 |
+| `upload_requests_per_ip_minute` | `240` | `120` | 1 to 1000000 |
+| `upload_mb_per_ip_hour` | `64` MiB | `8` MiB | 1 to 1048576 MiB |
+| `sessions_per_device_hour` | `12` | `30` | 1 to 1000000 |
+| `sessions_per_ip_hour` | `120` | `120` | 1 to 1000000 |
+| `sessions_per_hour` | `3000` | `20000` | 1 to 1000000 |
+
+The replay request limits apply separately to `/config`, `/start` and
+`/chunks`. For errors and logs, the upload request limit applies separately
+to `/errors` and `/logs`, while both share the per-IP byte allowance. Session
+limits count new recordings or diagnostic credentials; renewing a diagnostic
+credential does not count as another session
+
+Apps and users behind one IP share its limits, including people on the same
+office or home network. Configure [trusted proxy headers](installation.md#behind-a-reverse-proxy)
+so PocketBase sees the client address. The controls say MB; each unit means
+1024 × 1024 bytes, or 1 MiB
+
+The errors and logs values are the same settings shown under **Rate limits**
+in **Errors and logs settings**. Saving in either panel updates those values.
+Daily storage budgets, retention, sampling and privacy rules are separate
+and stay unchanged when limits are saved
+
+### Limits API
+
+Superusers can read and save limits with `GET` and
+`POST /api/replay/security/limits`. Both return
+`{ replay: { ... }, observability: { ... } }` using the fields above. The
+`observability` group omits `start_requests_per_ip_minute`
+
+POST accepts either group, with some or all of its fields. Omitted fields
+retain their current values; unknown groups or fields are rejected. For
+example, to change only the replay upload request limit:
+
+```json
+{ "replay": { "upload_requests_per_ip_minute": 120 } }
+```
+
+Without saved limits the server uses the defaults above. No rate-limit
+environment overrides are used. See [counter windows and limits](privacy-and-limits.md#server-rate-and-upload-limits)
+for restart behavior and the bounded per-IP counters
+
 ## Errors and logs settings
 
 Errors and logs have independent switches in the dashboard's Error and log
 settings. Each has its own retention period, and they share a daily storage
-budget. Open **Rate limits** to adjust new credentials per device, per IP and
-across the server, requests per minute, and the shared IP upload allowance.
+budget. Open **Rate limits** here or in **Upload security** to adjust the same
+new-credential, request and IP upload limits.
 These switches do not change replay sampling
 
 See [errors and logs](observability.md) for the settings table and client options
@@ -64,7 +139,7 @@ The app combines them with its built-in rules for inputs, `[contenteditable]`, `
 
 The app strips every `data:` URL from a recording by default, so pictures an app draws for itself, such as generated avatars or a photo held in memory, play back empty
 
-Tick **Record images the app builds itself** under **Recording settings** to keep `data:` URLs for AVIF, GIF, JPEG, PNG, SVG and WebP images, in `src` attributes and CSS `url()` values
+Tick **Include images created in the app** under **Recording settings** to keep `data:` URLs for AVIF, GIF, JPEG, PNG, SVG and WebP images, in `src` attributes and CSS `url()` values
 
 An image over 128 KB of URL text is still stripped, because a full snapshot is one event and an event over 1 MB stops the recording
 

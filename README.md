@@ -19,9 +19,20 @@ an rrweb recorder and a private dashboard
   device or recording, and chart their volume by level over time
 - Configure errors and logs independently, with their own retention and a
   shared daily storage limit
+- Optionally require revocable ingestion keys, verified accounts, or both
 
 Recording, error tracking and logs are off by default. Dashboard access
 requires a PocketBase superuser
+
+Ingestion requirements default off. Open **Upload security** to create
+keys and enable **Require API key** or **Require a signed-in account**. Client
+keys allow submission only and are public; data access remains private. See
+[ingestion security](docs/authentication.md#optional-ingestion-requirements)
+
+Expand **Rate limits** in **Upload security** to adjust replay and error/log
+traffic separately. Limits apply even when the key and account requirements
+are off. **Save limits** applies changes; **Use default limits** fills the
+form for review before saving. See [rate limits](docs/configuration.md#rate-limits)
 
 ## Dashboard
 
@@ -142,6 +153,11 @@ replay.stop();
 Use your app's stable device ID and deployed server URL, then watch a new
 recording in the dashboard to check playback and masking
 
+If you enable **Require API key**, pass the dashboard's key as `apiKey` to
+`startReplay` and `startObservability`. Update all senders before enabling the
+requirement. **Require a signed-in account** separately requires verified
+`accountId` and `authToken` metadata
+
 See [client integration](docs/integration.md) for accounts, room metadata,
 lifecycle handling and native asset setup
 
@@ -196,7 +212,7 @@ Use HTTPS for remote deployments and keep superuser tokens out of your frontend
 | [Client integration](docs/integration.md) | Metadata, Capacitor, Electron, custom transports and native assets |
 | [Configuration](docs/configuration.md) | Sampling, retention, storage budgets, privacy rules and playback |
 | [Errors and logs](docs/observability.md) | Capture options, issue resolution, alerts, searchable logs and ingestion |
-| [Accounts](docs/authentication.md) | Token verification, separate databases and account deletion |
+| [Upload security and accounts](docs/authentication.md) | Optional API keys, verified-account requirements, token verification and account deletion |
 | [Privacy and limits](docs/privacy-and-limits.md) | Captured data, retries, recording limits and compatibility |
 | [Development](docs/development.md) | Local checks, performance measurement and releases |
 | [Platform plugins](plugins/README.md) | Capacitor, future React Native, NativeScript and Flutter integrations, and plugin architecture |

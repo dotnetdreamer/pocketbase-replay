@@ -51,6 +51,7 @@ export function createReplay(options: ReplayOptions, runtime: ReplayRuntime): Re
     errors: 0, mainThreadMs: 0, compressionWallMs: 0, bufferedBytes: 0, queuedBytes: 0,
   };
   const endpoint = options.endpoint.replace(/\/+$/, '');
+  const apiKey = typeof options.apiKey === 'string' ? options.apiKey.trim() : '';
   let closed = !endpoint || !options.transport;
   let active = options.initialActive !== false;
   let session: Session | null = null;
@@ -239,6 +240,7 @@ export function createReplay(options: ReplayOptions, runtime: ReplayRuntime): Re
       room: batch.room, encoding: 'gzip-base64', data: base64(compressed),
       rawBytes: batch.bytes + 1, eventCount: batch.entries.length,
       hasSnapshot: batch.entries.some((entry) => entry.snapshot),
+      ...(apiKey ? { apiKey } : {}),
     };
   }
 
@@ -407,7 +409,7 @@ export function createReplay(options: ReplayOptions, runtime: ReplayRuntime): Re
     if (session && session.expiresAt <= runtime.now() + 30000) { disable(); seq = 0; }
     const expectedIdentity = identity;
     try {
-      const body = JSON.stringify(value);
+      const body = JSON.stringify({ ...value, ...(apiKey ? { apiKey } : {}) });
       metrics.networkBytes += byteLength(body);
       const config = await options.transport!.post(`${endpoint}/api/replay/config`, body) as Record<string, unknown>;
       if (closed || expectedIdentity !== identity || identityOf(metadata() ?? value) !== expectedIdentity) { refreshAgain = !closed; return; }

@@ -17,6 +17,19 @@ Tests cover queue bounds, retries, snapshot recovery, masking, settings, server
 privacy rules, lifecycle, Capacitor detection, server validation, account
 verification, erasure and migration isolation
 
+Upload security checks cover the default-off switches, named key creation
+and revocation, optional key and verified-account requirements across replay,
+errors and logs, existing anonymous credentials, and superuser-only management.
+Client checks preserve legacy envelopes without a key, carry keys through
+native requests and exit beacons, and isolate saved diagnostic credentials
+by endpoint and key. Capacitor tests cover combined and independent starts
+
+Rate-limit checks cover unchanged defaults, positive bounded values, partial
+updates, shared error/log settings and preserved usage counters. Saving limits
+must leave security switches and unrelated settings unchanged. In the browser,
+verify the separate **Save limits** action and **Use default limits**, which
+fills the draft until saved
+
 Error and log checks also cover explicit grouping keys, complete Discord
 messages and partial retries, concurrent storage admission, transaction
 rollback, configured rate limits, stale chart requests and plugin capture

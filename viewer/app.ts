@@ -3,6 +3,7 @@ import 'rrweb-player/dist/style.css';
 import './style.css';
 import { dayBound, IDLE_KEPT_MS, recordedAt, recoverEvents, shortenIdle, type IdlePeriod, type StoredChunk } from './decode';
 import { keepPlaying } from './player';
+import { installSecurityPanel } from './security';
 import {
   bucketLabel, LogVolumeRequest, OBSERVABILITY_RATE_DEFAULTS, PagedRecords, replayOffset, telemetryQuery, VOLUME_GROUPS, volumeColumns, volumeScale,
   type ErrorOccurrence, type Issue, type IssueAlert, type IssueStatus, type LogEntry, type LogVolume, type ObservabilitySettings, type VolumeColumn,
@@ -82,6 +83,8 @@ async function request(path: string, body?: unknown, method = body === undefined
   return data;
 }
 
+const securityPanel = installSecurityPanel(request);
+
 function markWatching(): void {
   for (const item of $('sessions').children) {
     const current = (item as HTMLElement).dataset.session === watching;
@@ -132,6 +135,8 @@ function signOut(): void {
   $('logout').hidden = true;
   $('open-settings').hidden = true;
   $('open-observability-settings').hidden = true;
+  $('open-security').hidden = true;
+  securityPanel.reset();
   $<HTMLDialogElement>('settings-dialog').close();
   $<HTMLDialogElement>('erase-dialog').close();
   $<HTMLDialogElement>('observability-settings-dialog').close();
@@ -426,6 +431,7 @@ async function open(): Promise<void> {
   $('logout').hidden = false;
   $('open-settings').hidden = false;
   $('open-observability-settings').hidden = false;
+  $('open-security').hidden = false;
   await search();
   status('');
 }
@@ -1197,6 +1203,6 @@ new ResizeObserver(() => {
   }, 100);
 }).observe($('player'));
 document.addEventListener('visibilitychange', scheduleAlertRefresh);
-window.addEventListener('pagehide', () => { dashboardDisposed = true; stopAlertRefresh(); closePlayer(); });
+window.addEventListener('pagehide', () => { dashboardDisposed = true; stopAlertRefresh(); closePlayer(); securityPanel.reset(); });
 window.addEventListener('pageshow', () => { dashboardDisposed = false; scheduleAlertRefresh(); });
 if (token) void open().catch(() => { signOut(); status('Sign in again to view recordings'); });

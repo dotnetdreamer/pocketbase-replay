@@ -1,4 +1,6 @@
 const core = require('./replay-core.js');
+const security = require('./ingestion-security.js');
+const limits = require('./ingestion-limits.js');
 
 function readBody(e) {
   let raw;
@@ -61,7 +63,7 @@ function load(store, key) {
   try { return JSON.parse(store.get(key) || '{}') || {}; } catch (_) { return {}; }
 }
 
-function ipBudget(e, bytes) {
+function ipBudget(e, bytes, maxBytes) {
   const store = e.app.store();
   const key = $security.sha256(e.realIP());
   function read() {
@@ -72,7 +74,7 @@ function ipBudget(e, bytes) {
   const state = read();
   // A full map stops per-IP counting for the hour; the daily budget still caps the disk.
   if (!state.keys[key] && Object.keys(state.keys).length >= 4096) return function () {};
-  if ((state.keys[key] || 0) + bytes > core.LIMITS.ipBytesPerHour) core.fail(429, 'Replay upload budget reached');
+  if ((state.keys[key] || 0) + bytes > maxBytes) core.fail(429, 'Replay upload budget reached');
   return function () {
     const next = read();
     next.keys[key] = (next.keys[key] || 0) + bytes;
@@ -193,35 +195,52 @@ function trustProxy(app) {
 }
 
 function publicConfig(e) {
-  rate(e, 'config', 120);
-  const meta = core.metadata(readBody(e));
+  const budget = limits.replayConfig(e.app);
+  rate(e, 'config', budget.config_requests_per_ip_minute);
+  const body = readBody(e);
+  const admission = security.check(e.app, body);
+  const meta = core.metadata(body);
+  if (admission.requireAccount) {
+    meta.accountId = account(e.app, meta);
+    security.requireAccount(admission, meta.accountId);
+  }
   const cfg = config(e.app);
   // A claim that cannot be selected needs no verification; lying only opts a client out.
   if (!selected(cfg, meta)) return { enabled: false, uploadIntervalMs: core.LIMITS.uploadIntervalMs };
-  meta.accountId = account(e.app, meta);
+  if (!admission.requireAccount) meta.accountId = account(e.app, meta);
+  security.check(e.app, body, meta.accountId);
   if (!selected(cfg, meta) || isForgotten(e.app, meta.accountId)) return { enabled: false, uploadIntervalMs: core.LIMITS.uploadIntervalMs };
   return { enabled: true, uploadIntervalMs: core.LIMITS.uploadIntervalMs, maskTextSelector: cfg.mask_selector, blockSelector: cfg.block_selector, recordImages: cfg.record_images };
 }
 
 function start(e) {
-  rate(e, 'start', 30);
-  const meta = core.metadata(readBody(e));
+  const budget = limits.replayConfig(e.app);
+  rate(e, 'start', budget.start_requests_per_ip_minute);
+  const body = readBody(e);
+  const admission = security.check(e.app, body);
+  const meta = core.metadata(body);
+  if (admission.requireAccount) {
+    meta.accountId = account(e.app, meta);
+    security.requireAccount(admission, meta.accountId);
+  }
   let cfg = config(e.app);
   if (!selected(cfg, meta)) return { enabled: false };
-  meta.accountId = account(e.app, meta);
+  if (!admission.requireAccount) meta.accountId = account(e.app, meta);
   if (!selected(cfg, meta)) return { enabled: false };
   const now = Date.now();
   const token = $security.randomString(64);
   const ipHash = $security.sha256(e.realIP());
   let session;
   e.app.runInTransaction(function (tx) {
+    security.check(tx, body, meta.accountId);
+    const currentLimits = limits.replayConfig(tx, true);
     cfg = config(tx);
     if (!selected(cfg, meta) || isForgotten(tx, meta.accountId)) core.fail(403, 'Replay is disabled');
     const since = now - 60 * 60 * 1000;
     const params = { since: since, device: meta.deviceId, ip: ipHash };
-    if (count(tx, 'replay_sessions', 'deviceId = {:device} AND startedAt > {:since}', params) >= 12 ||
-        count(tx, 'replay_sessions', 'ipHash = {:ip} AND startedAt > {:since}', params) >= 120 ||
-        count(tx, 'replay_sessions', 'startedAt > {:since}', params) >= 3000) core.fail(429, 'Too many replay sessions');
+    if (count(tx, 'replay_sessions', 'deviceId = {:device} AND startedAt > {:since}', params) >= currentLimits.sessions_per_device_hour ||
+        count(tx, 'replay_sessions', 'ipHash = {:ip} AND startedAt > {:since}', params) >= currentLimits.sessions_per_ip_hour ||
+        count(tx, 'replay_sessions', 'startedAt > {:since}', params) >= currentLimits.sessions_per_hour) core.fail(429, 'Too many replay sessions');
     session = new Record(tx.findCollectionByNameOrId('replay_sessions'));
     for (const key of ['deviceId', 'accountId', 'platform', 'appVersion', 'room']) session.set(key, meta[key]);
     session.set('rooms', meta.room ? '|' + meta.room + '|' : '');
@@ -239,14 +258,18 @@ function start(e) {
 }
 
 function upload(e) {
-  rate(e, 'upload', 240);
-  const value = core.chunk(readBody(e), Date.now());
-  const spend = ipBudget(e, value.compressedBytes);
+  const budget = limits.replayConfig(e.app);
+  rate(e, 'upload', budget.upload_requests_per_ip_minute);
+  const body = readBody(e);
+  security.check(e.app, body);
+  const value = core.chunk(body, Date.now());
+  const spend = ipBudget(e, value.compressedBytes, budget.upload_mb_per_ip_hour * 1024 * 1024);
   let added = false;
   e.app.runInTransaction(function (tx) {
     let session;
     try { session = tx.findRecordById('replay_sessions', value.sessionId); } catch (_) { core.fail(401, 'Invalid upload token'); }
     if (!$security.equal(session.getString('tokenHash'), $security.sha256(value.token))) core.fail(401, 'Invalid upload token');
+    security.check(tx, body, session.getString('accountId'));
     if (session.getFloat('expiresAt') <= Date.now()) core.fail(410, 'Replay session expired');
     const cfg = config(tx);
     if (!selected(cfg, { accountId: session.getString('accountId'), deviceId: session.getString('deviceId') }) || isForgotten(tx, session.getString('accountId'))) core.fail(403, 'Replay is disabled');

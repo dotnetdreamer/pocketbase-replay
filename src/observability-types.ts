@@ -35,6 +35,7 @@ export type ObservabilityEvent = CapturedException | CapturedLog;
 
 export interface ObservabilityOptions {
   endpoint: string;
+  apiKey?: string;
   metadata: () => ReplayMetadata;
   errors?: boolean | ErrorTrackingOptions;
   logs?: boolean | LogCaptureOptions;

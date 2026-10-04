@@ -77,6 +77,18 @@ await PocketBaseReplay.stop();
 `beforeSend`. Enable **Collect errors** and **Collect logs** in the dashboard's
 **Errors and logs settings** to receive diagnostics. Both features default off
 
+The optional `apiKey` option works on `start` and `startObservability`. Set it
+when you enable **Require API key** under the dashboard's **Upload
+security** button. A combined `start` passes the same key to replay and
+diagnostics; independently started diagnostics keep their own key when a
+later replay-only `start` leaves them running
+
+**Require a signed-in account** is a separate optional requirement using the
+`accountId` and `authToken` metadata above. Both security requirements default
+off. Ingestion keys are public and copyable from an installed app and never
+grant access to recorded data or administration. See
+[ingestion security](https://github.com/dotnetdreamer/pocketbase-replay/blob/main/docs/authentication.md#optional-ingestion-requirements)
+
 See [client integration](https://github.com/dotnetdreamer/pocketbase-replay/blob/main/docs/integration.md) for replay and
 [errors and logs](https://github.com/dotnetdreamer/pocketbase-replay/blob/main/docs/observability.md) for capture options, privacy and
 server settings

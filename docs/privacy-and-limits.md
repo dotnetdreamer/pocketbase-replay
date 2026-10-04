@@ -21,6 +21,14 @@ Review [privacy rules](configuration.md#privacy-rules) against your actual UI an
 
 ## Access and upload protection
 
+The dashboard's **Upload security** controls optional **Require API key**
+and **Require a signed-in account** requirements. Both default off and apply to
+replay, errors and logs. Each named key grants ingestion only, is stored as a
+hash and can be revoked. Client keys are public and copyable; they do not prove
+that a sender is your app. A verified-account requirement checks the existing
+app token and refuses credentials admitted anonymously. See
+[ingestion security](authentication.md#optional-ingestion-requirements)
+
 Uploads use per-session credentials, gzip compression, sequence numbers and idempotent retries
 
 All replay reads require a superuser, and client claims never authorize replay reads
@@ -28,6 +36,10 @@ All replay reads require a superuser, and client claims never authorize replay r
 Errors and logs use separate short-lived upload credentials. Linking an entry
 to a recording requires that recording's upload credential and matching
 account and device metadata. Error, log and alert reads also require a superuser
+
+Ingestion keys do not divide the server into projects or separate budgets.
+Existing server rate and storage limits remain shared, and server-enforced
+limits are needed even when a key is required
 
 DOM masking rules do not apply to error messages or log attributes. Configure
 `sensitiveText` and `beforeSend` for the diagnostics controller, and avoid
@@ -86,11 +98,21 @@ Chunk times may be up to 24 hours ahead of the server clock, so a phone whose cl
 
 ## Server rate and upload limits
 
+Open **Rate limits** in **Upload security** to configure replay and error/log
+limits separately. The values below are the replay defaults. Limits stay
+enabled when API key and account requirements are off, and apply to all apps
+and keys using this server. [Configuration](configuration.md#rate-limits)
+lists all defaults and allowed ranges
+
 Every per-IP limit uses the address PocketBase sees, so configure the server when it is [behind a reverse proxy](installation.md#behind-a-reverse-proxy)
+
+Users behind the same IP share its allowance. Saved changes apply immediately
+without resetting the usage already counted. Daily storage budgets are
+separate from these request, session and per-IP byte limits
 
 ### Upload volume
 
-Each client IP may upload 64 MiB of gzip data an hour
+By default, each client IP may upload 64 MiB of gzip data an hour
 
 Past that, uploads get 429 `Replay upload budget reached`
 
@@ -98,7 +120,7 @@ Once 4,096 IPs have uploaded in an hour, new ones are not counted until the next
 
 ### Requests
 
-| Route | Requests per IP per minute |
+| Route | Default requests per IP per minute |
 | --- | --- |
 | `/config` | 120 |
 | `/start` | 30 |
@@ -110,11 +132,23 @@ Once it counts 4,096 route-and-IP pairs in a minute, new pairs are not counted u
 
 ### New sessions
 
-| Scope | New sessions per hour |
+| Scope | Default new sessions per hour |
 | --- | --- |
 | Device | 12 |
 | IP | 120 |
 | Total | 3,000 |
+
+### Counter windows and restarts
+
+Request counters use fixed minute windows; per-IP byte counters use fixed
+hour windows. These counters are held in server memory and reset when their
+window changes or PocketBase restarts. Saving limits keeps the current
+counters. New-session limits count stored sessions or credentials created
+within the preceding hour, so their counts survive a restart
+
+The per-IP maps remain bounded at 4,096 entries. Once a map is full, new
+entries are not counted until its next window. PocketBase's own rate
+limiter and the daily storage budgets still apply
 
 ## Browser compatibility
 

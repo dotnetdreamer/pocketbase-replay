@@ -14,6 +14,7 @@ export interface ReplayTransport {
 
 export interface ReplayOptions {
   endpoint: string;
+  apiKey?: string;
   metadata: () => ReplayMetadata;
   transport?: ReplayTransport;
   blockSelector?: string;
@@ -70,6 +71,7 @@ export interface ReplayChunk {
   rawBytes: number;
   eventCount: number;
   hasSnapshot: boolean;
+  apiKey?: string;
 }
 
 export interface RecorderAdapter {
