@@ -118,7 +118,7 @@ Once it counts 4,096 route-and-IP pairs in a minute, new pairs are not counted u
 
 ## Browser compatibility
 
-Chromium 91 is the client floor
+The client requires Chromium 91 or newer
 
 No `structuredClone`, `randomUUID` or `CompressionStream` is required
 

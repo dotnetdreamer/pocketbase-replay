@@ -1,17 +1,17 @@
 import { gzip, gzipSync, strToU8 } from 'fflate';
 import { autoLifecycle, nativeTransport, pageVisible } from './detect';
 import { createReplay } from './engine';
-import { ReplayHttpError } from './errors';
+import { ReplayHttpError } from './errors.js';
 import { createObservability } from './observability';
 import { subscribeCapture } from './observability-capture';
-import type { ObservabilityController, ObservabilityOptions, ObservabilityStorage } from './observability-types';
-import type { ReplayController, ReplayOptions, ReplayTransport } from './types';
+import type { ObservabilityController, ObservabilityOptions, ObservabilityStorage } from './observability-types.js';
+import type { ReplayController, ReplayOptions, ReplayTransport } from './types.js';
 
-export type { ReplayController, ReplayOptions, ReplayMetadata, ReplayMetrics, ReplayTransport, ReplaySessionContext } from './types';
+export type { ReplayController, ReplayOptions, ReplayMetadata, ReplayMetrics, ReplayTransport, ReplaySessionContext } from './types.js';
 export type {
   CapturedException, CapturedLog, ErrorTrackingOptions, ExceptionContext, LogCaptureOptions, LogLevel,
   ObservabilityAttributes, ObservabilityController, ObservabilityEvent, ObservabilityMetrics, ObservabilityOptions,
-} from './observability-types';
+} from './observability-types.js';
 export { ReplayHttpError };
 
 export function fetchTransport(): ReplayTransport {

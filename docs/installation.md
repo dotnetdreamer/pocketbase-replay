@@ -8,25 +8,26 @@ PocketBase for replay
 Both use the same hooks and base migration, with an extra migration for a
 dedicated replay database
 
-## Build and install the client
+## Install the client
 
-From a checkout of this repository:
+In your frontend project:
+
+```sh
+npm install pocketbase-replay
+```
+
+The client works with bundlers such as Vite, and TypeScript is optional
+
+To build an unpublished version from a checkout of this repository:
 
 ```sh
 npm ci
 npm test
-npm run build
 npm pack
 ```
 
-In your frontend project, install the tarball printed by `npm pack`, replacing
-the path and version below with your generated file:
-
-```sh
-npm install /path/to/pocketbase-replay-VERSION.tgz
-```
-
-The client works with bundlers such as Vite, and TypeScript is optional
+Then install the generated tarball in your frontend project with
+`npm install /path/to/pocketbase-replay-VERSION.tgz`
 
 ## Existing PocketBase
 
@@ -36,7 +37,7 @@ From your frontend project, point `--target` at the directory containing your
 PocketBase hooks and migrations:
 
 ```sh
-node node_modules/pocketbase-replay/scripts/install.mjs --target ./backend
+npx pb-replay-install --target ./backend
 ```
 
 The installer adds these files without replacing your hooks, migrations or data:
@@ -110,7 +111,7 @@ For your own PocketBase instance used only for replay, install with
 `--dedicated` to add the same migration:
 
 ```sh
-node node_modules/pocketbase-replay/scripts/install.mjs --target ./replay --dedicated
+npx pb-replay-install --target ./replay --dedicated
 ```
 
 Do not use `--dedicated` on a PocketBase that also serves your app because it

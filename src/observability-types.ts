@@ -1,4 +1,4 @@
-import type { ReplayController, ReplayMetadata, ReplaySessionContext, ReplayTransport } from './types';
+import type { ReplayController, ReplayMetadata, ReplaySessionContext, ReplayTransport } from './types.js';
 
 export type LogLevel = 'trace' | 'debug' | 'info' | 'warn' | 'error' | 'fatal';
 export type ObservabilityAttributes = Record<string, unknown>;

@@ -4,6 +4,27 @@
   "description": "Session replay, error tracking and structured logs for PocketBase",
   "type": "module",
   "license": "MIT",
+  "author": "Idrees Khan",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dotnetdreamer/pocketbase-replay.git"
+  },
+  "bugs": {
+    "url": "https://github.com/dotnetdreamer/pocketbase-replay/issues"
+  },
+  "homepage": "https://github.com/dotnetdreamer/pocketbase-replay#readme",
+  "keywords": [
+    "pocketbase",
+    "session-replay",
+    "rrweb",
+    "error-tracking",
+    "logging",
+    "self-hosted"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -20,12 +41,15 @@
     "README.md",
     "docs",
     "LICENSE",
-    "examples"
+    "examples",
+    "plugins/README.md",
+    "plugins/capacitor/README.md"
   ],
   "scripts": {
     "build:viewer": "node scripts/build-viewer.mjs",
     "test": "node --import tsx --test test/*.test.ts && node --test server/test/*.test.cjs",
     "build": "node scripts/build-client.mjs && node scripts/build-viewer.mjs",
+    "prepublishOnly": "npm test",
     "prepack": "npm run build",
     "prepare": "npm run build",
     "test:integration": "node scripts/verify-observability.mjs",

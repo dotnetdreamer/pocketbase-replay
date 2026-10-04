@@ -26,6 +26,12 @@ requires a PocketBase superuser
 
 ### 1. Install the client
 
+In your frontend project:
+
+```sh
+npm install pocketbase-replay
+```
+
 Build a package from a checkout of this repository:
 
 ```sh
@@ -115,7 +121,7 @@ privacy, alert behavior and the ingestion API
 - Text outside inputs needs masking or blocking rules for your app
 - Canvas, WebGL, iframes, video and audio are not captured
 - DOM replay needs available images, fonts and other page assets
-- Chromium 91 is the client floor
+- The client requires Chromium 91 or newer
 
 Use HTTPS for remote deployments and keep superuser tokens out of your frontend
 

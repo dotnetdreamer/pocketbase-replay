@@ -81,11 +81,46 @@ some of rrweb's mutation observer work and is not a total CPU measurement
 
 ## Release
 
-Publish from this repository after setting the package name, repository URL
-and release version
+The root package is published as `pocketbase-replay` on the public npm registry.
+The Capacitor plugin has its own package in `plugins/capacitor`
 
-The checks above do not publish a package or deploy a server; publishing
-requires a separate `npm publish` command
+For a release, update the root version and lockfile together, then run the
+local checks and PocketBase integration check above. The first npm release
+uses the existing version, `0.3.0`
+
+Create and inspect the release tarball:
+
+```sh
+npm pack
+```
+
+`prepack` builds the client, TypeScript declarations and dashboard before
+packing. The package includes the server hooks, migrations and installer,
+so consumers do not need build tools
+
+Install that tarball in a temporary frontend project with
+`npm install --omit=dev /path/to/pocketbase-replay-VERSION.tgz`. Check the
+client import and run `npx pb-replay-install --target ./backend` to verify
+the packaged server files
+
+Sign in to npm and publish the verified tarball, replacing the filename with
+the one printed by `npm pack`:
+
+```sh
+npm login --registry=https://registry.npmjs.org/
+npm whoami --registry=https://registry.npmjs.org/
+npm publish ./pocketbase-replay-VERSION.tgz --access public --registry=https://registry.npmjs.org/
+```
+
+Complete npm's authentication prompts, then verify the registry version:
+
+```sh
+npm view pocketbase-replay version --registry=https://registry.npmjs.org/
+```
+
+When publishing directly from the repository, `prepublishOnly` also runs the
+test suite. Publishing a tarball uses its existing files, so run the checks
+before creating it. A published name and version cannot be reused
 
 ## Dependencies
 
