@@ -1,8 +1,8 @@
 # Capacitor plugin
 
-[Back to platform plugins](../README.md)
+[Back to platform plugins](https://github.com/dotnetdreamer/pocketbase-replay/blob/main/plugins/README.md)
 
-`capacitor-pocketbase-replay` wraps the [PocketBase Replay](../../README.md)
+`capacitor-pocketbase-replay` wraps the [PocketBase Replay](https://github.com/dotnetdreamer/pocketbase-replay#readme)
 client for Capacitor apps, with a native layer on Android and iOS
 
 Recording runs in the WebView through the `pocketbase-replay` client, while the
@@ -12,6 +12,14 @@ JavaScript errors and structured application logs also run in the WebView,
 with the same native pause and resume handling
 
 ## Install
+
+In your app, install the plugin and client from npm, then sync the native
+projects:
+
+```sh
+npm install capacitor-pocketbase-replay pocketbase-replay
+npx cap sync
+```
 
 Build both packages from a checkout of this repository:
 
@@ -33,7 +41,7 @@ npx cap sync
 
 `pocketbase-replay` is a peer dependency, so your app chooses its version
 
-Set up the replay server as described in [installation](../../docs/installation.md)
+Set up the replay server as described in [installation](https://github.com/dotnetdreamer/pocketbase-replay/blob/main/docs/installation.md)
 
 ## Usage
 
@@ -69,8 +77,8 @@ await PocketBaseReplay.stop();
 `beforeSend`. Enable **Collect errors** and **Collect logs** in the dashboard's
 **Errors and logs settings** to receive diagnostics. Both features default off
 
-See [client integration](../../docs/integration.md) for replay and
-[errors and logs](../../docs/observability.md) for capture options, privacy and
+See [client integration](https://github.com/dotnetdreamer/pocketbase-replay/blob/main/docs/integration.md) for replay and
+[errors and logs](https://github.com/dotnetdreamer/pocketbase-replay/blob/main/docs/observability.md) for capture options, privacy and
 server settings
 
 The client is loaded by `start`, so importing the plugin at the top of your app

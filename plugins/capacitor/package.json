@@ -14,6 +14,10 @@
     "url": "https://github.com/dotnetdreamer/pocketbase-replay/issues"
   },
   "homepage": "https://github.com/dotnetdreamer/pocketbase-replay/tree/main/plugins/capacitor#readme",
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
   "keywords": [
     "capacitor",
     "plugin",
@@ -33,6 +37,7 @@
   "files": [
     "android/src/main/",
     "android/build.gradle",
+    "android/proguard-rules.pro",
     "dist/",
     "ios/Sources/",
     "ios/Tests/",
@@ -48,6 +53,7 @@
     "verify:web": "npm test",
     "verify:android": "node scripts/gradle.mjs clean build",
     "verify:ios": "xcodebuild -scheme CapacitorPocketbaseReplay -destination generic/platform=iOS",
+    "prepublishOnly": "npm test",
     "prepack": "npm run build"
   },
   "peerDependencies": {
