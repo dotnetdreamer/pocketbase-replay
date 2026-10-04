@@ -6,7 +6,8 @@ an rrweb recorder and a private dashboard
 ## Features
 
 - Add replay to an existing PocketBase or run a dedicated replay server
-- Use a framework-independent client in web, Capacitor and Electron apps
+- Use a framework-independent client in web and Electron apps, with a
+  [Capacitor plugin](plugins/capacitor/README.md) for Android and iOS
 - Select sessions with percentage sampling or verified account allowlists
 - Control masking, retention and storage limits from the dashboard
 - Find recordings by account, device, date or room and play them with timeline,
@@ -21,6 +22,68 @@ an rrweb recorder and a private dashboard
 
 Recording, error tracking and logs are off by default. Dashboard access
 requires a PocketBase superuser
+
+## Dashboard
+
+Open `/dash/replay` on your PocketBase server to browse recordings, investigate
+errors and search logs. These screenshots show the dashboard running locally
+with synthetic demo data
+
+### Session replay
+
+Find sessions by account, device, room or date, then watch the recording with
+timeline, speed and pause controls. Open the session's related issues and logs
+from the player
+
+![Session dashboard with account and device filters, a session list, and a checkout recording in the timeline viewer](docs/images/dashboard-replay.png)
+
+### Errors and issues
+
+Repeated errors are grouped into issues. Inspect occurrences, stack traces and
+device context, jump to the linked replay, and resolve or ignore an issue.
+Alerts flag new issues and failures that return after being resolved
+
+![Issues dashboard with grouped payment errors, occurrence counts, stack trace, and a link to the session replay](docs/images/dashboard-issues.png)
+
+### Structured logs
+
+Search messages and filter by severity, service, account, device or session.
+The volume chart shows activity by log level; each entry includes its context,
+structured attributes and a replay link when available
+
+![Logs dashboard with a volume chart by severity, searchable log entries, and the selected entry's context and structured attributes](docs/images/dashboard-logs.png)
+
+<details>
+<summary>Recording settings and privacy controls</summary>
+
+Choose percentage sampling or selected accounts, set retention and upload
+limits, and configure text masking and blocked elements. Errors and logs have
+separate collection and retention controls in Errors and logs settings, which
+also controls issue alerts
+
+![Recording settings dialog with percentage sampling, retention, daily upload limit, and masking and blocking selectors](docs/images/dashboard-settings.png)
+
+</details>
+
+## Platform plugins
+
+**Capacitor is available in this repository.** The
+[`capacitor-pocketbase-replay`](plugins/capacitor/README.md) plugin adds Android
+and iOS app lifecycle handling and native HTTP transport to the core client.
+It records the WebView DOM and captures JavaScript errors and application logs,
+pausing and resuming when the app's native state changes
+
+| Platform | Status | Integration |
+| --- | --- | --- |
+| [Capacitor](plugins/capacitor/README.md) | Implemented | Android, iOS and web; session replay, JavaScript errors and logs |
+| React Native | Future integration | No plugin implemented yet |
+| NativeScript | Future integration | No plugin implemented yet |
+| Flutter | Future integration | No plugin implemented yet |
+
+Plugins ship as separate packages. Native interfaces need a platform-specific
+recorder; the current recorder captures browser and WebView DOM. See the
+[platform plugin guide](plugins/README.md) for the architecture and how to add
+an integration
 
 ## Get started
 
@@ -136,7 +199,7 @@ Use HTTPS for remote deployments and keep superuser tokens out of your frontend
 | [Accounts](docs/authentication.md) | Token verification, separate databases and account deletion |
 | [Privacy and limits](docs/privacy-and-limits.md) | Captured data, retries, recording limits and compatibility |
 | [Development](docs/development.md) | Local checks, performance measurement and releases |
-| [Platform plugins](plugins/README.md) | The Capacitor plugin, and how plugins for other platforms stay separate |
+| [Platform plugins](plugins/README.md) | Capacitor, future React Native, NativeScript and Flutter integrations, and plugin architecture |
 
 ## License
 
