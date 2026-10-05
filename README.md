@@ -34,6 +34,38 @@ traffic separately. Limits apply even when the key and account requirements
 are off. **Save limits** applies changes; **Use default limits** fills the
 form for review before saving. See [rate limits](docs/configuration.md#rate-limits)
 
+## Self-hosting comparison
+
+PocketBase Replay runs in one PocketBase process with SQLite; Docker is optional
+
+**Our figures are measured process usage; competitors' figures are published
+server requirements**. Feature scope and traffic capacity differ
+
+| Project | CPU | RAM | Storage |
+| --- | --- | --- | --- |
+| **PocketBase Replay** | 8.3% of one core average | 57.4 MiB sampled peak RSS | Depends on recordings and retention |
+| [PostHog](https://posthog.com/docs/self-host) | 4 vCPU | 16 GB | More than 30 GB |
+| [OpenReplay](https://docs.openreplay.com/en/deployment/deploy-ubuntu/) | 2 vCPU minimum | 8 GB minimum | 50 GB minimum |
+| [Sentry](https://develop.sentry.dev/self-hosted/) | 4 cores minimum | 16 GB RAM + 16 GB swap minimum; 32 GB RAM recommended | 20 GB free minimum |
+
+PostHog's figures cover its unsupported hobby deployment. OpenReplay's cover
+low/moderate traffic on x86. Sentry's cover a deployment with Session Replay
+
+| Project | Features | Backend |
+| --- | --- | --- |
+| **PocketBase Replay** | DOM replay, JavaScript errors, logs and alerts | [One PocketBase process with SQLite](docs/installation.md) |
+| **PostHog** | [Replay, product analytics, flags and experiments](https://posthog.com/docs) | [PostgreSQL, ClickHouse, Redpanda, cache and object storage](https://github.com/PostHog/posthog/blob/master/docker-compose.hobby.yml) |
+| **OpenReplay** | [Replay, analytics and co-browsing](https://github.com/openreplay/openreplay) | [PostgreSQL, ClickHouse, cache and object storage](https://github.com/openreplay/openreplay/blob/main/scripts/docker-compose/docker-compose.yaml) |
+| **Sentry** | [Errors, replay, tracing, profiling and logs](https://github.com/getsentry/self-hosted/blob/26.9.0/sentry/sentry.conf.example.py) | [PostgreSQL, ClickHouse, Kafka, caches and object storage](https://github.com/getsentry/self-hosted/blob/26.9.0/docker-compose.yml) |
+
+Local test: PocketBase 0.39.9 on an 8-core Apple M1 Pro with 16 GiB RAM,
+20 synthetic devices, 5 uploads/second for 30 seconds. All 150 uploads were
+accepted: 50 replay chunks, 50 errors and 500 log entries
+
+[Benchmark report](docs/benchmarks/2026-10-04-pocketbase-replay.json) ·
+[Raw samples](docs/benchmarks/2026-10-04-pocketbase-replay.csv) ·
+[Reproduction script](scripts/benchmark-server.mjs)
+
 ## Dashboard
 
 Open `/dash/replay` on your PocketBase server to browse recordings, investigate

@@ -1,0 +1,349 @@
+{
+  "schemaVersion": 1,
+  "measuredAtUtc": "2026-10-04T21:51:39.332Z",
+  "scope": "Whole PocketBase process hosting PocketBase Replay; synthetic local HTTP ingestion, no browser recorder or dashboard workload",
+  "hardware": {
+    "os": "darwin",
+    "kernelRelease": "25.6.0",
+    "architecture": "arm64",
+    "cpu": "Apple M1 Pro",
+    "logicalCores": 8,
+    "ramBytes": 17179869184,
+    "osVersion": "26.6.1",
+    "osBuild": "25G76",
+    "model": "MacBookPro18,3"
+  },
+  "versions": {
+    "node": "v24.21.0",
+    "pocketbase": "pocketbase version 0.39.9",
+    "package": "0.3.0"
+  },
+  "provenance": {
+    "gitCommit": "d45214bd8c23b50a307719a55fecad3009135c81",
+    "installedServerTreeSha256": "3ae1ca7f3984160a9627b6c8abb1964623c7739eae144c4650056bb9e4cfa927",
+    "scriptSha256": "7ab49052e70faa349f3da23bcad4e86e358bdb0a98eac5feeabfccfaa9eeb727",
+    "pocketbaseBinarySha256": "45299ddf90af5a52dbca4ea62c5020c9de6606f16dded91e6849d2d4b4c01de7",
+    "sourceManifest": [
+      {
+        "path": "server/pb_hooks/700_replay.pb.js",
+        "sha256": "5401e719390a605cc9fa07d413b66f4cf68a77638b9df617b92df6b05e5fad70"
+      },
+      {
+        "path": "server/pb_hooks/705_ingestion_security.pb.js",
+        "sha256": "dc91b1cbdc106ac7d118362060fcc12cb24294506f941a15186927f53a6080a4"
+      },
+      {
+        "path": "server/pb_hooks/710_observability.pb.js",
+        "sha256": "a0f94eafc1892e17e58d2ac5a7aeabd7201a1e4dca70f823a853ad49c3267a4e"
+      },
+      {
+        "path": "server/pb_hooks/lib/ingestion-limits.js",
+        "sha256": "e94204a1e2e51ada29023d90bef45e6f7b691cd95d9845cc34f963a8460ea60f"
+      },
+      {
+        "path": "server/pb_hooks/lib/ingestion-security.js",
+        "sha256": "754893d561f9e22644f6d1e52dce6c374b2cbdef0702835d1dfc0d03bb18f68f"
+      },
+      {
+        "path": "server/pb_hooks/lib/observability-core.js",
+        "sha256": "7c0abca2e15c25d5aee16ccc2c047c1839b10c4ab5773c23b02471b305c4ed1e"
+      },
+      {
+        "path": "server/pb_hooks/lib/observability.js",
+        "sha256": "6202d118bc8d1aeeb8d4f4acaaf98bda0210caafeeff2974cc75fb1910995bc3"
+      },
+      {
+        "path": "server/pb_hooks/lib/replay-core.js",
+        "sha256": "ca97a64c29f43717927e9f956d8f23cd3fd9635b1b218eed99a678d7473e432a"
+      },
+      {
+        "path": "server/pb_hooks/lib/replay.js",
+        "sha256": "d09e40f3241f5f3a018899e8da5dbc9b1d8ec4e7d7dc036d7395c68e96e2730a"
+      },
+      {
+        "path": "server/pb_hooks/replay-dash/app.css.LEGAL.txt",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "server/pb_hooks/replay-dash/app.js",
+        "sha256": "135b2225c93372266dc736c9ff1ae780ef71dae3b4d571611ba55b910c641f46"
+      },
+      {
+        "path": "server/pb_hooks/replay-dash/app.js.LEGAL.txt",
+        "sha256": "8845232122c03344538410d131baee97a817686f1e406ac49cde8fba31843bce"
+      },
+      {
+        "path": "server/pb_hooks/replay-dash/index.html",
+        "sha256": "ebc89428eae49f38a6d02f50c6537e3e1ce84e6d3447c35b2cf0860dbec5e7c5"
+      },
+      {
+        "path": "server/pb_hooks/replay-dash/style.css",
+        "sha256": "014e02849e5265634eb1bbb79195ea030e154a558b20aeb9d417a59a15a0e8dc"
+      },
+      {
+        "path": "server/pb_migrations/1795600000_replay.js",
+        "sha256": "8e9786865799a3a846d7d5998e358660877c7ed5a80cdef40cf406c001c246e9"
+      },
+      {
+        "path": "server/pb_migrations/1795600002_observability.js",
+        "sha256": "4bdd3b3355c35a48dc8a5a878774270451fab5a22c45203ad5e75ddc77034273"
+      }
+    ]
+  },
+  "reproduction": {
+    "command": "node scripts/benchmark-server.mjs --pb /path/to/pocketbase --port 8111 --devices 20 --seconds 30 --requests-per-second 5 --idle-seconds 10 --cooldown-seconds 5 --sample-ms 200 --output docs/benchmarks/2026-10-04-pocketbase-replay",
+    "samplesFile": "2026-10-04-pocketbase-replay.csv"
+  },
+  "configuration": {
+    "recording": {
+      "account_ids": [],
+      "block_selector": "",
+      "daily_limit_mb": 1024,
+      "mask_selector": "",
+      "mode": "percentage",
+      "percentage": 100,
+      "record_images": false,
+      "retention_days": 14
+    },
+    "diagnostics": {
+      "alert_webhook_url": "",
+      "alerts_enabled": true,
+      "config_requests_per_ip_minute": 120,
+      "daily_limit_mb": 64,
+      "errors_enabled": true,
+      "errors_retention_days": 30,
+      "logs_enabled": true,
+      "logs_retention_days": 14,
+      "sessions_per_device_hour": 30,
+      "sessions_per_hour": 20000,
+      "sessions_per_ip_hour": 120,
+      "upload_mb_per_ip_hour": 8,
+      "upload_requests_per_ip_minute": 120
+    },
+    "security": {
+      "requireApiKey": false,
+      "requireAccount": false
+    },
+    "limits": {
+      "observability": {
+        "config_requests_per_ip_minute": 120,
+        "sessions_per_device_hour": 30,
+        "sessions_per_hour": 20000,
+        "sessions_per_ip_hour": 120,
+        "upload_mb_per_ip_hour": 8,
+        "upload_requests_per_ip_minute": 120
+      },
+      "replay": {
+        "config_requests_per_ip_minute": 120,
+        "sessions_per_device_hour": 12,
+        "sessions_per_hour": 3000,
+        "sessions_per_ip_hour": 120,
+        "start_requests_per_ip_minute": 30,
+        "upload_mb_per_ip_hour": 64,
+        "upload_requests_per_ip_minute": 240
+      }
+    },
+    "rateLimitOverrides": []
+  },
+  "methodology": {
+    "sampler": "ps -p <benchmark-only-pid> -o rss=,time=",
+    "sampleIntervalMs": 200,
+    "cpuTimeResolutionSeconds": 0.01,
+    "rssUnit": "KiB; converted to MiB by dividing by 1024",
+    "cpuDefinition": "Cumulative process CPU time delta divided by measured wall time. 100% equals one logical core. Driver and ps processes are excluded.",
+    "setup": "Starts occur before measured idle/load windows; setup CPU/wall measured separately after PocketBase health becomes ready.",
+    "idle": "Enabled collection and 20 replay/diagnostic credentials, no ingestion yet.",
+    "limitations": [
+      "Single short run on one developer laptop; no repeated-trial confidence interval.",
+      "Synthetic HTTP payloads and local loopback, with no TLS, reverse proxy, authentication verifier, browser capture or playback.",
+      "Sampled RSS can miss peaks shorter than the sampling interval; RSS is resident memory, not a minimum RAM requirement.",
+      "CPU quantized to ps TIME precision; Linux ps can report only whole seconds. Other workloads on this machine were not controlled.",
+      "No sustained traffic, concurrency ceiling, storage-retention or large-scale capacity claim."
+    ]
+  },
+  "workload": {
+    "simulatedDevices": 20,
+    "scheduledCalls": 150,
+    "targetUploadCallsPerSecond": 5,
+    "plannedLoadSeconds": 30,
+    "achievedUploadCallsPerSecond": 4.998262,
+    "scheduling": "Open-loop request every 200 ms; cycle replay, one-error batch, ten-log batch; rotate device after each three calls.",
+    "setupRequests": 67,
+    "replayPayloads": {
+      "initial": {
+        "rawBytes": 64623,
+        "gzipBytes": 17690,
+        "events": 202,
+        "fullSnapshotDomCards": 100
+      },
+      "subsequent": {
+        "rawBytes": 42801,
+        "gzipBytes": 11366,
+        "events": 200
+      },
+      "encoding": "JSON rrweb-style events; gzip(level 6) then base64. 200 text mutations per chunk. First chunk per device includes meta and full DOM snapshot."
+    },
+    "kinds": {
+      "replay": {
+        "calls": 50,
+        "successfulCalls": 50,
+        "plannedEntries": 10040,
+        "acceptedEntries": 10040,
+        "bodyBytesMin": 15428,
+        "bodyBytesMax": 23859,
+        "bodyBytesTotal": 940020
+      },
+      "errors": {
+        "calls": 50,
+        "successfulCalls": 50,
+        "plannedEntries": 50,
+        "acceptedEntries": 50,
+        "bodyBytesMin": 436,
+        "bodyBytesMax": 436,
+        "bodyBytesTotal": 21800
+      },
+      "logs": {
+        "calls": 50,
+        "successfulCalls": 50,
+        "plannedEntries": 500,
+        "acceptedEntries": 500,
+        "bodyBytesMin": 2488,
+        "bodyBytesMax": 2488,
+        "bodyBytesTotal": 124400
+      }
+    },
+    "statuses": {
+      "200": 150
+    },
+    "errors": [],
+    "latencyMs": {
+      "minimum": 6.228166,
+      "median": 11.357708,
+      "p95": 29.043458,
+      "maximum": 37.54625
+    }
+  },
+  "measurements": {
+    "startupCpuSecondsByFirstReadySample": 0.07,
+    "setup": {
+      "wallSeconds": 0.188031,
+      "cpuSeconds": 0.19,
+      "averageCpuPercentOfOneCore": 101.047168,
+      "averageCpuPercentOfAllLogicalCores": 12.630896,
+      "rssStartMiB": 44.203125,
+      "rssEndMiB": 49.515625,
+      "sampledPeakRssMiB": 49.515625,
+      "samples": 2
+    },
+    "idle": {
+      "wallSeconds": 10.00801,
+      "cpuSeconds": 0.02,
+      "averageCpuPercentOfOneCore": 0.19984,
+      "averageCpuPercentOfAllLogicalCores": 0.02498,
+      "rssStartMiB": 49.515625,
+      "rssEndMiB": 50.171875,
+      "sampledPeakRssMiB": 50.171875,
+      "samples": 52
+    },
+    "load": {
+      "wallSeconds": 30.010434,
+      "cpuSeconds": 2.49,
+      "averageCpuPercentOfOneCore": 8.297114,
+      "averageCpuPercentOfAllLogicalCores": 1.037139,
+      "rssStartMiB": 50.171875,
+      "rssEndMiB": 57.28125,
+      "sampledPeakRssMiB": 57.28125,
+      "samples": 151
+    },
+    "cooldown": {
+      "wallSeconds": 5.006601,
+      "cpuSeconds": 0.01,
+      "averageCpuPercentOfOneCore": 0.199736,
+      "averageCpuPercentOfAllLogicalCores": 0.024967,
+      "rssStartMiB": 57.28125,
+      "rssEndMiB": 57.390625,
+      "sampledPeakRssMiB": 57.390625,
+      "samples": 27
+    },
+    "sampledPeakRssAcrossAllPhasesMiB": 57.390625
+  },
+  "verification": {
+    "storedRecords": {
+      "replay_sessions": 20,
+      "replay_observability_sessions": 20,
+      "replay_chunks": 50,
+      "replay_errors": 50,
+      "replay_logs": 500,
+      "replay_issues": 1
+    },
+    "allPlannedUploadsAccepted": true
+  },
+  "database": {
+    "beforeLoad": [
+      {
+        "file": "auxiliary.db",
+        "bytes": 24576
+      },
+      {
+        "file": "auxiliary.db-shm",
+        "bytes": 32768
+      },
+      {
+        "file": "auxiliary.db-wal",
+        "bytes": 45352
+      },
+      {
+        "file": "data.db",
+        "bytes": 159744
+      },
+      {
+        "file": "data.db-shm",
+        "bytes": 32768
+      },
+      {
+        "file": "data.db-wal",
+        "bytes": 1512072
+      }
+    ],
+    "afterLoad": [
+      {
+        "file": "auxiliary.db",
+        "bytes": 24576
+      },
+      {
+        "file": "auxiliary.db-shm",
+        "bytes": 32768
+      },
+      {
+        "file": "auxiliary.db-wal",
+        "bytes": 45352
+      },
+      {
+        "file": "data.db",
+        "bytes": 1671168
+      },
+      {
+        "file": "data.db-shm",
+        "bytes": 32768
+      },
+      {
+        "file": "data.db-wal",
+        "bytes": 4194192
+      }
+    ],
+    "beforeLoadTotalBytes": 1807280,
+    "afterLoadTotalBytes": 6000824,
+    "meaning": "Logical file sizes from stat, including main/auxiliary SQLite databases and current WAL/SHM files.",
+    "afterCleanShutdown": [
+      {
+        "file": "auxiliary.db",
+        "bytes": 110592
+      },
+      {
+        "file": "data.db",
+        "bytes": 1712128
+      }
+    ],
+    "afterCleanShutdownTotalBytes": 1822720
+  }
+}

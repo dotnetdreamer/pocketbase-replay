@@ -26,14 +26,14 @@
     </nav>
     <dialog id="security-dialog" class="card" aria-labelledby="security-title">
       <h2 id="security-title">Upload security</h2>
-      <p class="hint">Control who can send recordings, errors and logs, and how much data your server accepts. API key and sign-in requirements are off by default. Rate limits are already enabled.</p>
+      <p class="hint">Control who can send recordings, errors and logs, and how much data your server accepts<br>API key and sign-in requirements are off by default<br>Rate limits are already enabled</p>
       <form id="security-settings" class="security-form">
         <fieldset>
           <legend>Who can send data</legend>
           <label class="check"><input name="requireApiKey" type="checkbox" aria-describedby="security-key-hint"><span><strong>Require API key</strong><small>Uploads need a valid API key</small></span></label>
-          <p id="security-key-hint" class="hint">Create an API key below to enable this option. Then add the key to your app before turning it on.</p>
-          <label class="check"><input name="requireAccount" type="checkbox"><span><strong>Require a signed-in account</strong><small>Only signed-in users can send data. Guest uploads are blocked</small></span></label>
-          <p class="hint">API keys in websites and mobile apps can be copied. Rate and upload limits still apply when a key is required</p>
+          <p id="security-key-hint" class="hint">Create an API key below to enable this option<br>Then add the key to your app before turning it on</p>
+          <label class="check"><input name="requireAccount" type="checkbox"><span><strong>Require a signed-in account</strong><small>Only signed-in users can send data<br>Guest uploads are blocked</small></span></label>
+          <p class="hint">API keys in websites and mobile apps can be copied<br>Rate and upload limits still apply when a key is required</p>
         </fieldset>
         <div class="dialog-actions"><button type="submit">Save settings</button></div>
       </form>
@@ -74,7 +74,7 @@
       </details>
       <section class="security-keys" aria-labelledby="security-keys-title">
         <h3 id="security-keys-title">API keys</h3>
-        <p class="hint">Give each app its own key. Keys can only send data. All keys share the same recording settings and upload limits.</p>
+        <p class="hint">Give each app its own key<br>Keys can only send data<br>All keys share the same recording settings and upload limits</p>
         <ul id="security-keys" class="security-key-list"></ul>
         <p id="security-keys-empty" class="hint">No API keys yet</p>
         <form id="security-create-key" class="security-create-key">
@@ -84,7 +84,7 @@
         <div id="security-created-key" class="security-created-key" hidden>
           <label>Copy this key now<input id="security-key-value" readonly autocomplete="off" spellcheck="false"></label>
           <button id="security-copy-key" type="button" class="secondary">Copy key</button>
-          <p class="hint">Copy this key now. You won’t see it again. Add it to your app’s setup as <code>apiKey</code>.</p>
+          <p class="hint">Copy this key now<br>You won’t see it again<br>Add it to your app’s setup as <code>apiKey</code></p>
         </div>
       </section>
       <p id="security-error" class="dialog-error" role="alert"></p>

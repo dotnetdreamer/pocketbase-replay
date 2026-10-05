@@ -70,8 +70,8 @@ export function installSecurityPanel(request: AdminRequest): { reset(): void } {
 
   function updateKeyHint(): void {
     element('security-key-hint').textContent = settings?.keys.length
-      ? 'Add the key to your app before turning this on. Apps without a valid key will stop sending data.'
-      : 'Create an API key below to enable this option. Then add the key to your app before turning it on.';
+      ? 'Add the key to your app before turning this on; apps without a valid key will stop sending data'
+      : 'Create an API key below to enable this option, then add the key to your app before turning it on';
   }
 
   function render(): void {
@@ -104,13 +104,13 @@ export function installSecurityPanel(request: AdminRequest): { reset(): void } {
       if (settings!.requireApiKey && settings!.keys.length === 1) {
         const reason = document.createElement('small');
         reason.id = 'security-last-key-hint';
-        reason.textContent = 'Create another key, or turn off Require API key and save, to remove this key.';
+        reason.textContent = 'Create another key, or turn off Require API key and save, to remove this key';
         info.append(reason);
         revoke.title = reason.textContent;
         revoke.setAttribute('aria-describedby', reason.id);
       }
       revoke.addEventListener('click', () => {
-        if (!confirm(`Remove ${key.label}? Apps using this key will stop sending data while API keys are required.`)) return;
+        if (!confirm(`Remove ${key.label}? Apps using this key will stop sending data while API keys are required`)) return;
         void action(async (current) => {
           const result: SecuritySettings = await request(`/api/replay/security/keys/${encodeURIComponent(key.id)}`, undefined, 'DELETE');
           if (current !== generation) return;
@@ -161,12 +161,12 @@ export function installSecurityPanel(request: AdminRequest): { reset(): void } {
     const current = ++generation;
     clearKey();
     element('security-error').textContent = '';
-    element('security-state').textContent = 'Loading settings...';
+    element('security-state').textContent = 'Loading settings';
     settings = undefined;
     limits = undefined;
     limitsForm.reset();
     element('security-limits-error').textContent = '';
-    element('security-limits-state').textContent = 'Loading limits...';
+    element('security-limits-state').textContent = 'Loading limits';
     element('security-keys').replaceChildren();
     setBusy(true);
     dialog.showModal();
@@ -203,12 +203,12 @@ export function installSecurityPanel(request: AdminRequest): { reset(): void } {
       Object.fromEntries(Object.keys(RATE_DEFAULTS[group]).map((key) => [key, Number(input(limitsForm, `${group}.${key}`).value)])),
     ])) as RateLimits;
     void action(async (current) => {
-      element('security-limits-state').textContent = 'Saving limits...';
+      element('security-limits-state').textContent = 'Saving limits';
       const result: RateLimits = await request('/api/replay/security/limits', next);
       if (current !== generation) return;
       limits = result;
       showLimits(result);
-      element('security-limits-state').textContent = 'Limits saved. New requests use these limits';
+      element('security-limits-state').textContent = 'Limits saved, new requests use these limits';
     }, 'security-limits');
   });
 
@@ -216,7 +216,7 @@ export function installSecurityPanel(request: AdminRequest): { reset(): void } {
     if (busy || !limits) return;
     showLimits(RATE_DEFAULTS);
     element('security-limits-error').textContent = '';
-    element('security-limits-state').textContent = 'Default limits selected. Click Save limits to apply';
+    element('security-limits-state').textContent = 'Default limits selected, click Save limits to apply';
   });
 
   settingsForm.addEventListener('submit', (event) => {
@@ -227,7 +227,7 @@ export function installSecurityPanel(request: AdminRequest): { reset(): void } {
       requireAccount: input(settingsForm, 'requireAccount').checked,
     };
     if (!busy && next.requireApiKey && !settings?.keys.length) {
-      element('security-error').textContent = 'Create an API key below before saving. Give it a name and click Create key';
+      element('security-error').textContent = 'Create an API key below before saving these settings';
       input(createForm, 'label').focus();
       return;
     }
@@ -236,7 +236,7 @@ export function installSecurityPanel(request: AdminRequest): { reset(): void } {
       if (current !== generation) return;
       settings = result;
       showRequirements();
-      element('security-state').textContent = 'Settings saved. These settings apply to new requests';
+      element('security-state').textContent = 'Settings saved, these settings apply to new requests';
     });
   });
 
@@ -258,7 +258,7 @@ export function installSecurityPanel(request: AdminRequest): { reset(): void } {
       input(createForm, 'label').value = '';
       rawKey.value = result.apiKey;
       element('security-created-key').hidden = false;
-      element('security-state').textContent = 'Key created. Copy it before closing this panel';
+      element('security-state').textContent = 'Key created, copy it before closing this panel';
       rawKey.focus();
       rawKey.select();
     });
@@ -271,7 +271,7 @@ export function installSecurityPanel(request: AdminRequest): { reset(): void } {
     if (!navigator.clipboard) {
       rawKey.focus();
       rawKey.select();
-      element('security-state').textContent = 'Key selected. Copy it with your browser';
+      element('security-state').textContent = 'Key selected, copy it with your browser';
       return;
     }
     void navigator.clipboard.writeText(key).then(() => {
