@@ -155,6 +155,8 @@ function account(app, meta) {
 }
 
 function selected(cfg, identity) {
+  const prefix = $os.getenv('REPLAY_APP_VERSION_PREFIX');
+  if (prefix && !identity.appVersion.startsWith(prefix)) return false;
   return core.enabled(cfg, identity, function (value) { return $security.sha256(value); });
 }
 
@@ -272,7 +274,7 @@ function upload(e) {
     security.check(tx, body, session.getString('accountId'));
     if (session.getFloat('expiresAt') <= Date.now()) core.fail(410, 'Replay session expired');
     const cfg = config(tx);
-    if (!selected(cfg, { accountId: session.getString('accountId'), deviceId: session.getString('deviceId') }) || isForgotten(tx, session.getString('accountId'))) core.fail(403, 'Replay is disabled');
+    if (!selected(cfg, { accountId: session.getString('accountId'), deviceId: session.getString('deviceId'), appVersion: session.getString('appVersion') }) || isForgotten(tx, session.getString('accountId'))) core.fail(403, 'Replay is disabled');
     const duplicates = tx.findRecordsByFilter('replay_chunks', 'session = {:id} && seq = {:seq}', '', 1, 0, { id: session.id, seq: value.seq });
     if (duplicates.length) {
       const old = duplicates[0];

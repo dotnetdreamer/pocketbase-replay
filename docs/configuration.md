@@ -110,6 +110,8 @@ Open clients check settings every 45 seconds
 
 Uploads also check the current recording gate, so turning recording off refuses new chunks immediately
 
+When several apps share one server, `REPLAY_APP_VERSION_PREFIX` can limit recording to clients whose `appVersion` begins with that value. The usual mode and percentage still apply. The prefix is checked at config, session start and upload; changing it stops uploads from existing sessions that no longer match. Leave it unset to admit every app. Because the client supplies `appVersion`, this is a recording selector, not an authentication rule
+
 Every minute, a sweep deletes expired sessions 20 at a time for up to about 5 seconds
 
 ### Storage budget

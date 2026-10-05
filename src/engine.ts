@@ -198,6 +198,7 @@ export function createReplay(options: ReplayOptions, runtime: ReplayRuntime): Re
           : packagedAssetBase(endpoint, assetOrigin, value.appVersion),
         assetOrigin,
         images: serverImages,
+        preserveDataAttributes: options.preserveDataAttributes,
       });
       const bytes = byteLength(json) + 1;
       if (bytes > REPLAY_LIMITS.eventBytes) { metrics.droppedEvents++; blockOversize(); return; }

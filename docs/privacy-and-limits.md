@@ -14,7 +14,7 @@ It is not a pixel video archive, and canvas areas remain blank
 - Replay does not record console output. The separate [logs feature](observability.md) can collect selected console levels when explicitly enabled
 - Text rendered outside an input needs a mask or block rule, set in the dashboard or passed to `startReplay`, or a `sensitiveText` list
 - A rule the app cannot parse stops recording instead of leaving text unmasked
-- Sensitive attributes and every `data-*` attribute outside a short safe list are removed, which can make some layouts replay slightly off
+- Sensitive attributes and every `data-*` attribute outside a short safe list are removed by default, which can make some layouts replay slightly off. Apps can opt in fixed, finite UI states with [`preserveDataAttributes`](integration.md#optional-settings)
 - URL query strings and navigation fragments are stripped, but secrets embedded in URL path segments still need a blocking rule
 
 Review [privacy rules](configuration.md#privacy-rules) against your actual UI and watch a new recording after changing the UI or its rules

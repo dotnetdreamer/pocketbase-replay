@@ -63,9 +63,29 @@ For accounts stored outside the replay database, set up
 | `subscribeActive(listener)` | Override automatic pause and resume detection |
 | `initialActive` | Override the initial recording activity state |
 | `assetBaseUrl` | Override automatic asset URL rewriting |
+| `preserveDataAttributes` | Keep explicitly listed, finite `data-*` UI state values in DOM replay |
 
 Client masking and blocking rules are combined with the server's rules, so
 both apply
+
+If your CSS uses a `data-*` attribute to show a screen, opt in only its fixed
+UI states. For example:
+
+```js
+startReplay({
+  endpoint,
+  metadata,
+  preserveDataAttributes: { 'data-screen': ['language', 'lobby', 'game'] },
+});
+```
+
+The default short safe list is unchanged. Extra names must be lowercase
+`data-*` names, and values must be exact ASCII words containing only
+letters, digits, `_` or `-`, up to 40 characters. At most 16 names and 16
+values per name are accepted. Private-looking names and values, URLs, arbitrary
+text and values matching `sensitiveText` are discarded. If a recorded state
+later changes to an unlisted value, replay removes the old attribute. Use
+this only for fixed UI state, never for names, account data or identifiers.
 
 ## Platform detection
 

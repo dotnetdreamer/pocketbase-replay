@@ -134,3 +134,57 @@ test('data: images are blanked unless the record_images setting is on, and stay 
   assert.equal(on.data.node.attributes.src, avatar);
   assert.equal(on.data.node.attributes.style, `background:url("${avatar}")`);
 });
+
+test('opted-in finite data attributes survive snapshots and attribute changes', () => {
+  const options = { preserveDataAttributes: { 'data-screen': ['language', 'lobby', 'game', 'chapterIntro'], 'data-locale': ['en', 'id'] } };
+  const snapshot = JSON.parse(serializeEvent({ type: 2, timestamp: 1, data: { node: {
+    tagName: 'div', attributes: { 'data-screen': 'language', 'data-locale': 'id', 'data-unknown': 'visible' },
+  } } }, [], options));
+  assert.deepEqual(snapshot.data.node.attributes, { 'data-screen': 'language', 'data-locale': 'id' });
+
+  const mutation = JSON.parse(serializeEvent({ type: 3, timestamp: 2, data: { source: 0, attributes: [
+    { id: 1, attributes: { 'data-screen': 'chapterIntro', 'data-locale': 'en', 'data-unknown': 'visible' } },
+  ] } }, [], options));
+  assert.deepEqual(mutation.data.attributes[0].attributes, { 'data-screen': 'chapterIntro', 'data-locale': 'en' });
+
+  const unknown = JSON.parse(serializeEvent({ type: 3, timestamp: 3, data: { source: 0, attributes: [
+    { id: 1, attributes: { 'data-screen': 'Alice private value' } },
+  ] } }, [], options));
+  assert.deepEqual(unknown.data.attributes[0].attributes, { 'data-screen': null }, 'an unsafe new state removes the old allowed value');
+});
+
+test('data attribute opt-in rejects private names, non-enum values and sensitive text', () => {
+  const preserveDataAttributes = {
+    'data-screen': ['language', 'player-name', 'private-token', 'A'.repeat(80)],
+    'data-user-id': ['1'], 'data-userid': ['1'], 'data-email': ['ready'], 'data-credential': ['ready'],
+    'data-Image': ['ready'], 'data-style!': ['ready'],
+  };
+  const attributes = {
+    'data-screen': 'language', 'data-user-id': '1', 'data-userid': '1', 'data-email': 'ready',
+    'data-credential': 'ready', 'data-Image': 'ready', 'data-style!': 'ready',
+  };
+  const snapshot = JSON.parse(serializeEvent({ type: 2, timestamp: 1, data: { node: { tagName: 'div', attributes } } }, [], { preserveDataAttributes }));
+  assert.deepEqual(snapshot.data.node.attributes, { 'data-screen': 'language' });
+
+  for (const value of ['player-name', 'private-token', 'a'.repeat(41), 'https://example.test', 'alice@example.test', 'alice']) {
+    const result = JSON.parse(serializeEvent({ type: 2, timestamp: 1, data: { node: {
+      tagName: 'div', attributes: { 'data-screen': value },
+    } } }, value === 'alice' ? ['alice'] : [], { preserveDataAttributes: { 'data-screen': [value] } }));
+    assert.deepEqual(result.data.node.attributes, {}, value);
+  }
+
+  const removed = JSON.parse(serializeEvent({ type: 3, timestamp: 2, data: { source: 0, attributes: [
+    { id: 1, attributes: { 'data-screen': null } },
+  ] } }, [], { preserveDataAttributes: { 'data-screen': ['language'] } }));
+  assert.deepEqual(removed.data.attributes[0].attributes, { 'data-screen': null });
+
+  const oversized = JSON.parse(serializeEvent({ type: 2, timestamp: 3, data: { node: {
+    tagName: 'div', attributes: { 'data-screen': 'language' },
+  } } }, [], { preserveDataAttributes: { 'data-screen': Array.from({ length: 17 }, (_, index) => index ? `screen${index}` : 'language') } }));
+  assert.deepEqual(oversized.data.node.attributes, {}, 'an oversized allowlist is ignored');
+
+  const unchanged = JSON.parse(serializeEvent({ type: 2, timestamp: 1, data: { node: {
+    tagName: 'div', attributes: { 'data-screen': 'language', 'data-state': 'open' },
+  } } }));
+  assert.deepEqual(unchanged.data.node.attributes, { 'data-state': 'open' });
+});

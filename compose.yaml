@@ -11,4 +11,5 @@ services:
       REPLAY_ERASE_KEY: ${REPLAY_ERASE_KEY:-}
       # Must be set behind a proxy (e.g. X-Forwarded-For), or all clients share one per-IP limit.
       REPLAY_TRUSTED_PROXY: ${REPLAY_TRUSTED_PROXY:-}
+      REPLAY_APP_VERSION_PREFIX: ${REPLAY_APP_VERSION_PREFIX:-}
     restart: unless-stopped
