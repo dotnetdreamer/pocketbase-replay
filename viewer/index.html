@@ -5,13 +5,27 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="referrer" content="no-referrer">
   <title>PocketBase Replay</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='32' y2='32' gradientUnits='userSpaceOnUse'%3E%3Cstop offset='0' stop-color='%235cb0ff'/%3E%3Cstop offset='1' stop-color='%232459a6'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='32' height='32' rx='8' fill='url(%23g)'/%3E%3Cpath d='M8 16a8 8 0 1 0 8-8' fill='none' stroke='%23fff' stroke-width='2.4' stroke-linecap='round'/%3E%3Cpath d='M12.2 8 17 4.2v7.6z' fill='%23fff' stroke='%23fff' stroke-linejoin='round'/%3E%3Cpath d='M14 12.5v7l6-3.5z' fill='%23fff' stroke='%23fff' stroke-width='1.6' stroke-linejoin='round'/%3E%3C/svg%3E">
   <!-- Relative, so the page also works behind a proxy path such as /replay/dash/replay. -->
   <link rel="stylesheet" href="replay/style.css">
   <script type="module" src="replay/app.js"></script>
 </head>
 <body>
-  <header><div><h1>PocketBase Replay</h1><p>Session replays, errors and logs</p></div><div class="header-actions"><button id="logout" hidden>Sign out</button><button id="open-settings" hidden>Recording settings</button><button id="open-observability-settings" hidden>Errors and logs settings</button><button id="open-security" hidden>Upload security</button></div></header>
-  <p id="status" role="status" aria-live="polite"></p>
+  <header class="topbar">
+    <h1 class="brand"><svg class="logo" viewBox="0 0 32 32" width="36" height="36" role="img" aria-label="PocketBase Replay"><title>PocketBase Replay</title><defs><linearGradient id="logo-fill" x1="0" y1="0" x2="32" y2="32" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#5cb0ff"/><stop offset="1" stop-color="#2459a6"/></linearGradient></defs><rect width="32" height="32" rx="8" fill="url(#logo-fill)"/><path d="M8 16a8 8 0 1 0 8-8" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round"/><path d="M12.2 8 17 4.2v7.6z" fill="#fff" stroke="#fff" stroke-linejoin="round"/><path d="M14 12.5v7l6-3.5z" fill="#fff" stroke="#fff" stroke-width="1.6" stroke-linejoin="round"/></svg></h1>
+    <nav id="dashboard-tabs" class="dashboard-tabs" role="tablist" aria-label="Replay tools" hidden>
+      <button id="sessions-tab" type="button" role="tab" aria-controls="sessions-view" aria-selected="true">Sessions</button>
+      <button id="issues-tab" type="button" role="tab" aria-controls="issues-view" aria-selected="false" tabindex="-1">Issues <span id="issues-alert-badge" class="tab-count" hidden></span></button>
+      <button id="logs-tab" type="button" role="tab" aria-controls="logs-view" aria-selected="false" tabindex="-1">Logs</button>
+    </nav>
+    <p id="status" role="status" aria-live="polite"></p>
+    <div id="header-actions" class="header-actions" hidden>
+      <button id="open-settings" type="button" title="Sampling, retention and privacy rules"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="3.5" fill="currentColor" stroke="none"/></svg><span>Recording</span></button>
+      <button id="open-observability-settings" type="button" title="Error tracking, logs and alerts"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 12h4l2.5-7 5 14 2.5-7h5"/></svg><span>Diagnostics</span></button>
+      <button id="open-security" type="button" title="API keys, sign-in and rate limits"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.8l7.5 3v5.7c0 4.8-3.2 8.3-7.5 9.7-4.3-1.4-7.5-4.9-7.5-9.7V5.8z"/><path d="M8.8 12.2l2.2 2.2 4.2-4.4"/></svg><span>Security</span></button>
+      <button id="logout" type="button" class="sign-out" title="Sign out" aria-label="Sign out"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9.5 4.5h-3a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h3"/><path d="M14.5 8l4.5 4-4.5 4"/><path d="M19 12H9.5"/></svg></button>
+    </div>
+  </header>
   <form id="login" class="card login">
     <h2>Sign in to PocketBase</h2>
     <label>Email<input name="email" type="email" autocomplete="username" required></label>
@@ -19,13 +33,8 @@
     <button type="submit">Sign in</button>
   </form>
   <main id="dashboard" hidden>
-    <nav class="dashboard-tabs" role="tablist" aria-label="Replay tools">
-      <button id="sessions-tab" type="button" role="tab" aria-controls="sessions-view" aria-selected="true">Sessions</button>
-      <button id="issues-tab" type="button" role="tab" aria-controls="issues-view" aria-selected="false" tabindex="-1">Issues <span id="issues-alert-badge" class="tab-count" hidden></span></button>
-      <button id="logs-tab" type="button" role="tab" aria-controls="logs-view" aria-selected="false" tabindex="-1">Logs</button>
-    </nav>
     <dialog id="security-dialog" class="card" aria-labelledby="security-title">
-      <h2 id="security-title">Upload security</h2>
+      <h2 id="security-title">Security settings</h2>
       <p class="hint">Control who can send recordings, errors and logs, and how much data your server accepts<br>API key and sign-in requirements are off by default<br>Rate limits are already enabled</p>
       <form id="security-settings" class="security-form">
         <fieldset>
@@ -64,9 +73,9 @@
               <label><span id="diagnostics-ip-limit-help-label">New sessions per IP each hour</span><input name="observability.sessions_per_ip_hour" type="number" min="1" max="1000000" step="1" required aria-labelledby="diagnostics-ip-limit-help-label" aria-describedby="diagnostics-ip-limit-help"><small id="diagnostics-ip-limit-help">Counts new error/log sending sessions across all devices sharing one IP in the past 60 minutes<br>Active sessions can keep sending within their other limits<span class="rate-limit-example"><strong>Example:</strong> With a limit of 120, 20 devices sharing one IP could each begin 6 error/log sessions within 60 minutes</span><span class="rate-limit-guidance"><strong>When to change:</strong> Raise this for shared networks with many users<br>Lower it to restrict new sending sessions from one network address</span></small></label>
               <label><span id="diagnostics-total-limit-help-label">New sessions on this server each hour</span><input name="observability.sessions_per_hour" type="number" min="1" max="1000000" step="1" required aria-labelledby="diagnostics-total-limit-help-label" aria-describedby="diagnostics-total-limit-help"><small id="diagnostics-total-limit-help">Counts new error/log sending sessions across all apps, devices and IP addresses on this server in the past 60 minutes<br>Extra sessions must wait<span class="rate-limit-example"><strong>Example:</strong> With a limit of 20,000, all apps together can begin 20,000 error/log sessions within 60 minutes, across every IP and API key</span><span class="rate-limit-guidance"><strong>When to change:</strong> Raise this as usage grows and your server has capacity<br>Lower it to limit the total number of new sending sessions</span></small></label>
             </div>
-            <p class="hint">The upload request limit applies to errors and logs separately<br>The data limit covers both<br>These values also appear in Errors and logs settings</p>
+            <p class="hint">The upload request limit applies to errors and logs separately<br>The data limit covers both<br>These values also appear in Diagnostics settings</p>
           </fieldset>
-          <p class="hint">Request counts reset at the start of each minute, and upload allowances reset at the start of each hour<br>New-session limits look back over the past 60 minutes<br>Saving new limits keeps the current usage counts<br>Daily storage limits are set in Recording settings and Errors and logs settings</p>
+          <p class="hint">Request counts reset at the start of each minute, and upload allowances reset at the start of each hour<br>New-session limits look back over the past 60 minutes<br>Saving new limits keeps the current usage counts<br>Daily storage limits are set in Recording settings and Diagnostics settings</p>
           <p id="security-limits-error" class="dialog-error" role="alert"></p>
           <p id="security-limits-state" role="status" aria-live="polite"></p>
           <div class="dialog-actions"><button id="security-limits-defaults" type="button" class="secondary">Use default limits</button><button type="submit">Save limits</button></div>
@@ -92,7 +101,7 @@
       <div class="dialog-actions"><button id="close-security" type="button" class="secondary">Close</button></div>
     </dialog>
     <dialog id="observability-settings-dialog" class="card" aria-labelledby="observability-settings-title">
-      <h2 id="observability-settings-title">Errors and logs settings</h2>
+      <h2 id="observability-settings-title">Diagnostics settings</h2>
       <form id="observability-settings">
         <fieldset>
           <legend>Error tracking</legend>
@@ -131,7 +140,7 @@
         </details>
         <p class="hint">Error and log collection start off. These settings apply separately from session recording</p>
         <p id="observability-settings-error" class="dialog-error" role="alert"></p>
-        <div class="dialog-actions"><button id="close-observability-settings" type="button" class="secondary">Cancel</button><button type="submit">Save error and log settings</button></div>
+        <div class="dialog-actions"><button id="close-observability-settings" type="button" class="secondary">Cancel</button><button type="submit">Save settings</button></div>
       </form>
     </dialog>
     <dialog id="settings-dialog" class="card" aria-labelledby="settings-title">
@@ -190,6 +199,7 @@
       </section>
       <section id="viewer" class="card viewer" aria-label="Recording">
         <div id="no-recording" class="no-recording"><h2>No recording open</h2><p>Choose a session to watch it here</p></div>
+        <div id="recording-loading" class="no-recording" hidden><span class="spinner" aria-hidden="true"></span><h2>Loading recording...</h2></div>
         <div id="recording" hidden>
           <div class="recording-heading"><h2 id="recording-title">Recording</h2><button id="close-recording">Close</button></div>
           <p id="recording-info"></p><p id="gaps" role="status"></p><p id="idle"></p>
@@ -200,7 +210,7 @@
       </section>
     </div>
     <div id="issues-view" class="telemetry-view" role="tabpanel" aria-labelledby="issues-tab" hidden>
-      <p id="errors-disabled" class="feature-state" hidden>Error tracking is off. Enable Collect errors in Errors and logs settings to capture new errors</p>
+      <p id="errors-disabled" class="feature-state" hidden>Error tracking is off. Enable Collect errors in Diagnostics settings to capture new errors</p>
       <div class="telemetry-workspace">
         <section class="card telemetry-panel" aria-label="Issues">
           <form id="issue-filters" class="telemetry-filters">
@@ -243,7 +253,7 @@
       </div>
     </div>
     <div id="logs-view" class="telemetry-view" role="tabpanel" aria-labelledby="logs-tab" hidden>
-      <p id="logs-disabled" class="feature-state" hidden>Log collection is off. Enable Collect logs in Errors and logs settings to capture new logs</p>
+      <p id="logs-disabled" class="feature-state" hidden>Log collection is off. Enable Collect logs in Diagnostics settings to capture new logs</p>
       <div class="telemetry-workspace">
         <section class="card telemetry-panel" aria-label="Logs">
           <form id="log-filters" class="telemetry-filters">

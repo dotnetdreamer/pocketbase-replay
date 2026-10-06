@@ -21,7 +21,7 @@ Review [privacy rules](configuration.md#privacy-rules) against your actual UI an
 
 ## Access and upload protection
 
-The dashboard's **Upload security** controls optional **Require API key**
+The dashboard's **Security** settings control optional **Require API key**
 and **Require a signed-in account** requirements. Both default off and apply to
 replay, errors and logs. Each named key grants ingestion only, is stored as a
 hash and can be revoked. Client keys are public and copyable; they do not prove
@@ -98,7 +98,7 @@ Chunk times may be up to 24 hours ahead of the server clock, so a phone whose cl
 
 ## Server rate and upload limits
 
-Open **Rate limits** in **Upload security** to configure replay and error/log
+Open **Rate limits** in **Security** to configure replay and error/log
 limits separately. The values below are the replay defaults. Limits stay
 enabled when API key and account requirements are off, and apply to all apps
 and keys using this server. [Configuration](configuration.md#rate-limits)

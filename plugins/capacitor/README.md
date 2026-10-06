@@ -75,11 +75,11 @@ await PocketBaseReplay.stop();
 
 `start` takes the client's replay options plus `errors`, `logs`, `service` and
 `beforeSend`. Enable **Collect errors** and **Collect logs** in the dashboard's
-**Errors and logs settings** to receive diagnostics. Both features default off
+**Diagnostics** settings to receive errors and logs. Both features default off
 
 The optional `apiKey` option works on `start` and `startObservability`. Set it
-when you enable **Require API key** under the dashboard's **Upload
-security** button. A combined `start` passes the same key to replay and
+when you enable **Require API key** under the dashboard's **Security**
+button. A combined `start` passes the same key to replay and
 diagnostics; independently started diagnostics keep their own key when a
 later replay-only `start` leaves them running
 

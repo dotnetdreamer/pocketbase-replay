@@ -24,12 +24,12 @@ an rrweb recorder and a private dashboard
 Recording, error tracking and logs are off by default. Dashboard access
 requires a PocketBase superuser
 
-Ingestion requirements default off. Open **Upload security** to create
+Ingestion requirements default off. Open **Security** to create
 keys and enable **Require API key** or **Require a signed-in account**. Client
 keys allow submission only and are public; data access remains private. See
 [ingestion security](docs/authentication.md#optional-ingestion-requirements)
 
-Expand **Rate limits** in **Upload security** to adjust replay and error/log
+Expand **Rate limits** in **Security** to adjust replay and error/log
 traffic separately. Limits apply even when the key and account requirements
 are off. **Save limits** applies changes; **Use default limits** fills the
 form for review before saving. See [rate limits](docs/configuration.md#rate-limits)
@@ -101,7 +101,7 @@ structured attributes and a replay link when available
 
 Choose percentage sampling or selected accounts, set retention and upload
 limits, and configure text masking and blocked elements. Errors and logs have
-separate collection and retention controls in Errors and logs settings, which
+separate collection and retention controls in Diagnostics settings, which
 also controls issue alerts
 
 ![Recording settings dialog with percentage sampling, retention, daily upload limit, and masking and blocking selectors](docs/images/dashboard-settings.png)
@@ -198,7 +198,7 @@ this client and adds native pause and resume
 
 ### 4. Add errors and logs
 
-In `/dash/replay`, open Errors and logs settings and enable the features you need
+In `/dash/replay`, open **Diagnostics** and enable the features you need
 
 ```js
 import { startObservability } from 'pocketbase-replay';

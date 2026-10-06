@@ -2,9 +2,9 @@
 
 [Back to README](../README.md)
 
-## Upload security
+## Security settings
 
-Open **Upload security** in the dashboard to manage named ingestion keys
+Open **Security** in the dashboard to manage named ingestion keys
 and the independent **Require API key** and **Require a signed-in account**
 switches. Both default off and apply to replay, errors and logs
 
@@ -21,7 +21,7 @@ for setup, rotation and the limits of public client keys
 
 ### Rate limits
 
-In **Upload security**, expand **Rate limits** to adjust replay and error/log
+In **Security**, expand **Rate limits** to adjust replay and error/log
 limits separately. Use **Save limits** to apply them. **Use default limits**
 fills the form with the defaults below; it changes the server only after you
 save. Saving limits does not save changes to the API key or account switches
@@ -54,7 +54,7 @@ so PocketBase sees the client address. The controls say MB; each unit means
 1024 × 1024 bytes, or 1 MiB
 
 The errors and logs values are the same settings shown under **Rate limits**
-in **Errors and logs settings**. Saving in either panel updates those values.
+in **Diagnostics** settings. Saving in either panel updates those values.
 Daily storage budgets, retention, sampling and privacy rules are separate
 and stay unchanged when limits are saved
 
@@ -77,11 +77,11 @@ Without saved limits the server uses the defaults above. No rate-limit
 environment overrides are used. See [counter windows and limits](privacy-and-limits.md#server-rate-and-upload-limits)
 for restart behavior and the bounded per-IP counters
 
-## Errors and logs settings
+## Diagnostics settings
 
-Errors and logs have independent switches in the dashboard's Error and log
+Errors and logs have independent switches in the dashboard's **Diagnostics**
 settings. Each has its own retention period, and they share a daily storage
-budget. Open **Rate limits** here or in **Upload security** to adjust the same
+budget. Open **Rate limits** here or in **Security** to adjust the same
 new-credential, request and IP upload limits.
 These switches do not change replay sampling
 

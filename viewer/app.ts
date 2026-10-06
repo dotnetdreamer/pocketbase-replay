@@ -94,14 +94,20 @@ function markWatching(): void {
   }
 }
 
+function showViewer(state: 'empty' | 'loading' | 'recording'): void {
+  $('no-recording').hidden = state !== 'empty';
+  $('recording-loading').hidden = state !== 'loading';
+  $('recording').hidden = state !== 'recording';
+  $('viewer').setAttribute('aria-busy', String(state === 'loading'));
+}
+
 function closePlayer(): void {
   playbackGeneration++;
   watching = '';
   player?.$destroy();
   player = undefined;
   $('player').replaceChildren();
-  $('recording').hidden = true;
-  $('no-recording').hidden = false;
+  showViewer('empty');
   markWatching();
 }
 
@@ -132,10 +138,8 @@ function signOut(): void {
   clearVolume();
   $('issues-alert-badge').hidden = true;
   $('dashboard').hidden = true;
-  $('logout').hidden = true;
-  $('open-settings').hidden = true;
-  $('open-observability-settings').hidden = true;
-  $('open-security').hidden = true;
+  $('dashboard-tabs').hidden = true;
+  $('header-actions').hidden = true;
   securityPanel.reset();
   $<HTMLDialogElement>('settings-dialog').close();
   $<HTMLDialogElement>('erase-dialog').close();
@@ -370,7 +374,20 @@ async function watch(sessionId: string, timestamp?: number): Promise<void> {
   watching = sessionId;
   markWatching();
   const generation = playbackGeneration;
+  showViewer('loading');
+  if (stacked()) $('viewer').scrollIntoView({ block: 'start' });
   status('Loading recording...');
+  try {
+    await loadRecording(sessionId, generation, timestamp);
+  } catch (error) {
+    // A failed load empties the panel again; a load already replaced by another is ignored.
+    if (generation !== playbackGeneration) return;
+    closePlayer();
+    throw error;
+  }
+}
+
+async function loadRecording(sessionId: string, generation: number, timestamp?: number): Promise<void> {
   const chunks: StoredChunk[] = [];
   let session: any;
   for (let part = 1; ; part++) {
@@ -389,8 +406,7 @@ async function watch(sessionId: string, timestamp?: number): Promise<void> {
   recordingGaps = recovered.gaps;
   playbackErrors = 0;
   clockText = '';
-  $('no-recording').hidden = true;
-  $('recording').hidden = false;
+  showViewer('recording');
   $('recording-title').textContent = `${session.accountId || 'Guest'} · ${session.deviceId}`;
   $('recording-info').textContent = `${session.platform} · ${session.appVersion} · ${new Date(session.startedAt).toLocaleString()} · Canvas content is not recorded`;
   notes();
@@ -428,10 +444,8 @@ async function open(): Promise<void> {
   await Promise.all([loadSettings(), loadObservabilitySettings()]);
   $('login').hidden = true;
   $('dashboard').hidden = false;
-  $('logout').hidden = false;
-  $('open-settings').hidden = false;
-  $('open-observability-settings').hidden = false;
-  $('open-security').hidden = false;
+  $('dashboard-tabs').hidden = false;
+  $('header-actions').hidden = false;
   await search();
   status('');
 }
@@ -1113,7 +1127,7 @@ form('observability-settings').addEventListener('submit', (event) => {
     await loadObservabilitySettings();
     renderAlerts();
     $<HTMLDialogElement>('observability-settings-dialog').close();
-    toast('Error and log settings saved');
+    toast('Diagnostics settings saved');
   })().catch((error: unknown) => {
     $('observability-settings-error').textContent = error instanceof Error ? error.message : 'Request failed';
   }).finally(() => { submit.disabled = false; });

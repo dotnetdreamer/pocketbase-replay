@@ -9,7 +9,7 @@ be enabled in the dashboard and in your client configuration
 
 1. Upgrade the server hooks and install the new migration as described in
    [installation](installation.md#upgrade-the-extension)
-2. Open `/dash/replay`, sign in as a superuser, and open **Errors and logs settings**
+2. Open `/dash/replay`, sign in as a superuser, and open **Diagnostics**
 3. Enable **Collect errors**, **Collect logs**, or both. Set retention and the
    daily storage limit, then save. Open **Rate limits** to adjust session,
    request and upload limits for your traffic
@@ -169,7 +169,7 @@ The dashboard saves one JSON object under the `observability` key in
 `replay_settings`. `GET` and `POST /api/replay/observability/settings` expose
 the same object to superusers
 
-The six rate fields below are also available in **Upload security**, under
+The six rate fields below are also available in **Security**, under
 **Rate limits**, and through `GET` and `POST /api/replay/security/limits` in
 the `observability` group. Both panels use the same saved values. **Save
 limits** applies changes; **Use default limits** fills the form and takes

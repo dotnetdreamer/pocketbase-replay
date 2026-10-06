@@ -2,9 +2,8 @@
 * { box-sizing: border-box; }
 body { margin: 0 auto; padding: 20px 24px; max-width: 1680px; }
 [hidden] { display: none !important; }
-header, .recording-heading { display: flex; justify-content: space-between; align-items: center; gap: 16px; }
-h1 { font-size: 26px; margin: 0; } h2 { font-size: 20px; margin: 0 0 16px; }
-header p { margin: 2px 0 0; }
+.recording-heading { display: flex; justify-content: space-between; align-items: center; gap: 16px; }
+h2 { font-size: 20px; margin: 0 0 16px; }
 p { color: #aebdd1; margin: 8px 0 16px; }
 label { display: flex; flex-direction: column; gap: 5px; font-size: 13px; color: #bccae0; }
 input, select, textarea, button { font: inherit; border: 1px solid #3c4b61; border-radius: 7px; padding: 9px 12px; background: #151e2c; color: #edf2f7; min-width: 0; }
@@ -16,7 +15,22 @@ button.danger { background: #7b2d36; } button.danger:hover { background: #9a3a45
 input:focus, button:focus-visible, select:focus, textarea:focus, summary:focus-visible { outline: 2px solid #73b7ff; outline-offset: 2px; }
 .card { background: #18212f; border: 1px solid #2e3c50; border-radius: 12px; padding: 20px; margin: 20px 0; }
 .login { max-width: 400px; margin: 48px auto; display: grid; gap: 16px; }
-.header-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+/* One bar holds the logo, tabs, status and settings; narrow screens give the tabs and status rows of their own. */
+.topbar { display: grid; grid-template-columns: auto auto minmax(0, 1fr) auto; grid-template-areas: 'brand tabs status actions'; align-items: center; gap: 0 16px; padding-bottom: 14px; margin-bottom: 18px; border-bottom: 1px solid #2e3c50; }
+.brand { grid-area: brand; margin: 0; line-height: 0; }
+.logo { display: block; width: 36px; height: 36px; }
+.topbar button { font-size: 14px; line-height: 20px; }
+.dashboard-tabs { grid-area: tabs; display: flex; gap: 2px; padding: 3px; border: 1px solid #2e3c50; border-radius: 10px; background: #151e2c; }
+.dashboard-tabs button { padding: 4px 14px; border-color: transparent; background: transparent; color: #aebdd1; }
+.dashboard-tabs button:hover { background: #1f2d42; color: #edf2f7; }
+.dashboard-tabs button[aria-selected='true'] { background: #254c79; color: #fff; }
+#status { grid-area: status; margin: 0; font-size: 13px; color: #8fa3bf; overflow-wrap: anywhere; }
+.header-actions { grid-area: actions; display: flex; justify-content: flex-end; align-items: center; gap: 6px; }
+.header-actions button { display: inline-flex; align-items: center; gap: 7px; padding: 8px 12px; background: transparent; }
+.header-actions button:hover { background: #1f2d42; }
+.header-actions svg { flex: none; width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; color: #8fc3ff; }
+.header-actions .sign-out { margin-left: 8px; padding: 9px; }
+.header-actions .sign-out svg { color: inherit; }
 dialog.card { margin: auto; padding: 22px 24px; width: min(1100px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow-y: auto; color: inherit; }
 dialog::backdrop { background: rgba(5, 8, 13, .7); }
 #erase-dialog { width: min(460px, calc(100vw - 32px)); }
@@ -76,7 +90,7 @@ button.secondary { background: transparent; } button.secondary:hover { backgroun
 #security-state { font-size: 13px; margin-bottom: 0; }
 #observability-settings .settings-advanced fieldset { margin-top: 14px; }
 #observability-settings .settings-advanced .hint { margin-top: 12px; }
-#status { min-height: 24px; margin: 6px 0 0; } #status.error, #gaps { color: #ffc38a; }
+#status.error, #gaps { color: #ffc38a; }
 
 /* Sessions on the left, the open recording on the right. */
 .workspace { display: grid; grid-template-columns: minmax(300px, 380px) minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); gap: 20px; }
@@ -106,6 +120,8 @@ button.secondary { background: transparent; } button.secondary:hover { backgroun
 .viewer { display: flex; flex-direction: column; }
 .no-recording { flex: 1; display: grid; place-content: center; min-height: 240px; text-align: center; }
 .no-recording h2 { margin: 0; } .no-recording p { margin: 4px 0 0; }
+.spinner { justify-self: center; width: 32px; height: 32px; margin-bottom: 14px; border: 3px solid #2e3c50; border-top-color: #8fc3ff; border-radius: 50%; animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
 #recording { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .recording-heading h2 { margin: 0; }
 #recording-info, #gaps, #idle { margin: 4px 0 0; }
@@ -115,9 +131,6 @@ button.secondary { background: transparent; } button.secondary:hover { backgroun
 .clock { margin: 6px 0 0; min-height: 1.5em; text-align: center; font-size: 13px; }
 .rr-player { margin: auto; color: #17202e; }
 .rr-player button { color: inherit; background: transparent; border: 0; }
-.dashboard-tabs { display: flex; gap: 6px; margin: 12px 0 18px; border-bottom: 1px solid #2e3c50; padding-bottom: 10px; }
-.dashboard-tabs button { background: transparent; border-color: transparent; }
-.dashboard-tabs button[aria-selected='true'] { border-color: #73b7ff; background: #254c79; }
 .tab-count { background: #733642; color: #ffe4e8; border-radius: 5px; padding: 1px 5px; font-size: 11px; margin-left: 4px; }
 .telemetry-view { display: flex; flex: 1; min-height: 0; flex-direction: column; }
 .feature-state { padding: 10px 14px; background: #252337; border: 1px solid #544863; border-radius: 8px; font-size: 13px; margin: 0 0 14px; }
@@ -213,6 +226,10 @@ button.secondary { background: transparent; } button.secondary:hover { backgroun
   .telemetry-panel { overflow-y: auto; }
 }
 @media (max-width: 900px) {
+  .topbar { grid-template-columns: auto minmax(0, 1fr); grid-template-areas: 'brand actions' 'tabs tabs' 'status status'; }
+  .dashboard-tabs { margin-top: 12px; }
+  .dashboard-tabs button { flex: 1; }
+  #status:not(:empty) { margin-top: 8px; }
   .workspace { grid-template-columns: minmax(0, 1fr); grid-template-rows: none; }
   .session-scroll { flex: none; max-height: 60vh; }
   #player { flex: none; }
@@ -221,4 +238,11 @@ button.secondary { background: transparent; } button.secondary:hover { backgroun
   .telemetry-detail { overflow: visible; }
 }
 @media (max-width: 850px) { body { padding: 12px; } .card { padding: 14px; } }
-@media (max-width: 480px) { header { align-items: flex-start; flex-direction: column; gap: 10px; } .header-actions { justify-content: flex-start; } .header-actions button { font-size: 12px; padding: 6px 8px; } #settings .row, #observability-settings .row { grid-template-columns: 1fr; } .filters label, .filters label:nth-of-type(n+4) { grid-column: 1 / -1; } h1 { font-size: 23px; } .context-grid { grid-template-columns: minmax(0, 1fr); gap: 2px; } .context-grid dd { margin-bottom: 8px; } .context-grid button { display: block; margin: 6px 0 0; } }
+/* Icons only; the words stay as the buttons' accessible names. */
+@media (max-width: 560px) {
+  .header-actions { gap: 4px; }
+  .header-actions button { padding: 9px; }
+  .header-actions .sign-out { margin-left: 4px; }
+  .header-actions button span { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; border: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+}
+@media (max-width: 480px) { #settings .row, #observability-settings .row { grid-template-columns: 1fr; } .filters label, .filters label:nth-of-type(n+4) { grid-column: 1 / -1; } .context-grid { grid-template-columns: minmax(0, 1fr); gap: 2px; } .context-grid dd { margin-bottom: 8px; } .context-grid button { display: block; margin: 6px 0 0; } }

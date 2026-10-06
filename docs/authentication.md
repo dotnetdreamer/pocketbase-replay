@@ -9,7 +9,7 @@ issues retain alerts with updated titles. See [errors and logs](observability.md
 
 ## Optional ingestion requirements
 
-Open **Upload security** in the dashboard to configure two independent
+Open **Security** in the dashboard to configure two independent
 requirements, shared by replay, errors and logs:
 
 | Setting | Default | Effect |
