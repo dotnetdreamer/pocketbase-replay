@@ -112,6 +112,8 @@ Uploads also check the current recording gate, so turning recording off refuses 
 
 When several apps share one server, `REPLAY_APP_VERSION_PREFIX` can limit recording to clients whose `appVersion` begins with that value. The usual mode and percentage still apply. The prefix is checked at config, session start and upload; changing it stops uploads from existing sessions that no longer match. Leave it unset to admit every app. Because the client supplies `appVersion`, this is a recording selector, not an authentication rule
 
+To include a second app while the primary prefix remains in place, set both `REPLAY_EXTRA_APP_VERSION_PREFIX` and `REPLAY_EXTRA_PLATFORM`. A client is selected when its `appVersion` matches the primary prefix, or when it matches the extra prefix **and** its `platform` equals the extra platform. Both values are checked again against the stored session on upload. Leaving either extra value unset preserves the primary-prefix behavior. When the primary prefix is unset, all apps remain eligible, as before. These values are recording selectors, not authentication rules
+
 Every minute, a sweep deletes expired sessions 20 at a time for up to about 5 seconds
 
 ### Storage budget
