@@ -3,6 +3,10 @@ import type { ReplayEvent } from './types';
 const URL_ATTRIBUTES = /^(?:href|src|action|formaction|poster|xlink:href)$/i;
 const PRIVATE_ATTRIBUTES = /(?:password|secret|token|authorization|cookie|email|phone)/i;
 const SAFE_DATA_ATTRIBUTES = /^(?:data-state|data-side|data-align|data-orientation|data-disabled|data-replay-block|data-replay-mask)$/;
+const OPTIONAL_DATA_ATTRIBUTE = /^data-[a-z][a-z0-9-]{0,39}$/;
+const OPTIONAL_DATA_VALUE = /^(?:[A-Za-z0-9][A-Za-z0-9_-]{0,39})?$/;
+const PRIVATE_DATA_NAME = /(?:password|secret|token|authorization|cookie|email|phone|credential|private|personal|account|user|name|address|payment|auth|key|fingerprint|uuid|guid|identifier|(?:^|[-_])id(?:$|[-_])|(?:device|player|room|order)id)/i;
+const PRIVATE_DATA_VALUE = /(?:password|secret|token|authorization|cookie|email|phone|credential|private|personal|account|user|name|address|payment|bearer|jwt|api.?key|fingerprint|uuid|guid|identifier)/i;
 const STATIC_ASSET = /^\/(?:assets|fonts|icons)\/(?:[A-Za-z0-9._-]+\/)*[A-Za-z0-9._-]+\.(?:avif|gif|ico|jpe?g|png|svg|webp|woff2?|ttf|otf)$/i;
 
 const PACKAGED_ORIGINS = ['https://localhost', 'capacitor://localhost', 'capacitor-electron://-'];
@@ -11,7 +15,29 @@ const DATA_IMAGE = /^data:image\/(?:avif|gif|jpeg|png|svg\+xml|webp)[;,]/i;
 // A full snapshot is one event capped at 1 MB, so one large picture must not stop the recording.
 const DATA_IMAGE_CHARS = 128 * 1024;
 
-export interface ReplayAssetOptions { assetBaseUrl?: string; assetOrigin?: string; images?: boolean }
+export interface ReplayAssetOptions {
+  assetBaseUrl?: string;
+  assetOrigin?: string;
+  images?: boolean;
+  preserveDataAttributes?: Record<string, readonly string[]>;
+}
+
+function preservedDataValues(input: ReplayAssetOptions['preserveDataAttributes']): Map<string, Set<string>> {
+  const result = new Map<string, Set<string>>();
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return result;
+  const entries = Object.entries(input);
+  if (entries.length > 16) return result;
+  for (const [name, values] of entries) {
+    if (!OPTIONAL_DATA_ATTRIBUTE.test(name) || PRIVATE_DATA_NAME.test(name) ||
+        !Array.isArray(values) || values.length === 0 || values.length > 16) continue;
+    const allowed = new Set<string>();
+    for (const value of values) {
+      if (typeof value === 'string' && OPTIONAL_DATA_VALUE.test(value) && !PRIVATE_DATA_VALUE.test(value)) allowed.add(value);
+    }
+    if (allowed.size) result.set(name, allowed);
+  }
+  return result;
+}
 
 let originSeen: string | undefined;
 let originPackaged = false;
@@ -71,14 +97,19 @@ function cleanStyle(value: Record<string, unknown>, assets: ReplayAssetOptions):
   }
 }
 
-function cleanAttributes(attributes: Record<string, unknown>, assets: ReplayAssetOptions, tagName?: string): void {
+function cleanAttributes(attributes: Record<string, unknown>, assets: ReplayAssetOptions,
+  preserved: Map<string, Set<string>>, mutation: boolean, tagName?: string): void {
   for (const key of Object.keys(attributes)) {
     const value = attributes[key];
     if (PRIVATE_ATTRIBUTES.test(key) || /^on/i.test(key) ||
-        (key.startsWith('data-') && !SAFE_DATA_ATTRIBUTES.test(key)) ||
         key === 'srcdoc' || key === 'srcset' || key === 'nonce' || key === 'title' || key === 'alt' || key === 'aria-label' ||
         (tagName === 'meta' && key === 'content')) {
       delete attributes[key];
+    } else if (/^data-/i.test(key) && !SAFE_DATA_ATTRIBUTES.test(key)) {
+      const allowed = preserved.get(key);
+      if (typeof value === 'string' && allowed?.has(value) && !privateAny?.test(value)) continue;
+      if (mutation && allowed) attributes[key] = null;
+      else delete attributes[key];
     } else if (key === 'value') {
       attributes[key] = value == null ? value : '*';
     } else if (typeof value === 'string' && URL_ATTRIBUTES.test(key)) {
@@ -120,8 +151,10 @@ function mask(value: string): string {
 
 export function serializeEvent(event: ReplayEvent, sensitiveText: string[] = [], assets: ReplayAssetOptions = {}): string {
   usePrivateText(sensitiveText);
+  const preserved = preservedDataValues(assets.preserveDataAttributes);
   // rrweb owns the DOM; this pass only changes its detached event objects.
   const cssEvent = event.type === 3 && typeof event.data.source === 'number' && [8, 13, 15].includes(event.data.source);
+  const domMutation = event.type === 3 && event.data.source === 0;
   const stack: { item: unknown; css: boolean }[] = [{ item: event, css: cssEvent }];
   while (stack.length) {
     const { item, css } = stack.pop()!;
@@ -132,7 +165,8 @@ export function serializeEvent(event: ReplayEvent, sensitiveText: string[] = [],
     }
     const object = item as Record<string, unknown>;
     if (object.attributes && !Array.isArray(object.attributes)) {
-      cleanAttributes(object.attributes as Record<string, unknown>, assets, String(object.tagName ?? ''));
+      cleanAttributes(object.attributes as Record<string, unknown>, assets, preserved,
+        domMutation && !('tagName' in object), String(object.tagName ?? ''));
     }
     for (const key of Object.keys(object)) {
       if (key === 'href' && typeof object[key] === 'string') object[key] = cleanUrl(object[key] as string, assets);

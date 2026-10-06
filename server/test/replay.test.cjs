@@ -30,8 +30,14 @@ function settingRows(settings) {
   return Object.keys(settings).map(key => ({ getString: field => field === 'key' ? key : JSON.stringify(settings[key]) }));
 }
 
-function globals(authURL) {
-  global.$os = { getenv: name => name === 'REPLAY_AUTH_URL' ? (authURL || '') : '' };
+function globals(authURL, appVersionPrefix, extraAppVersionPrefix, extraPlatform) {
+  const env = {
+    REPLAY_AUTH_URL: authURL || '',
+    REPLAY_APP_VERSION_PREFIX: appVersionPrefix || '',
+    REPLAY_EXTRA_APP_VERSION_PREFIX: extraAppVersionPrefix || '',
+    REPLAY_EXTRA_PLATFORM: extraPlatform || '',
+  };
+  global.$os = { getenv: name => env[name] || '' };
   global.$security = { sha256: hash, equal: (a, b) => a === b, randomString: length => 'r'.repeat(length) };
   global.readerToString = value => value;
   global.DynamicModel = function (value) { Object.assign(this, value); };
@@ -316,8 +322,8 @@ test('verified remote tokens are cached for ten minutes, pruned, and capped', ()
   assert.ok(capped[hash('other')] && capped.k4999 && !capped.k0, 'keeps the freshest entries');
 });
 
-function serverFixture(settings) {
-  globals('http://main-pocketbase:8090/api/collections/users/auth-refresh');
+function serverFixture(settings, appVersionPrefix, extraAppVersionPrefix, extraPlatform) {
+  globals('http://main-pocketbase:8090/api/collections/users/auth-refresh', appVersionPrefix, extraAppVersionPrefix, extraPlatform);
   const store = memoryStore();
   const sessions = new Map();
   const chunks = [];
@@ -406,14 +412,80 @@ test('config and start send the privacy rules whenever they answer enabled', () 
   assert.deepEqual(replay.start(fixture.request(base)), { enabled: false });
 });
 
-function uploadFixture(settings) {
-  const fixture = serverFixture({ ...defaults, mode: 'percentage', percentage: 100, ...settings });
+test('an operator app version prefix admits only matching recordings', () => {
+  const fixture = serverFixture({ ...defaults, mode: 'percentage', percentage: 100 }, 'game-');
+  fixture.app.db = () => ({ newQuery: () => ({ bind: () => ({ one: result => { result.total = 0; } }) }) });
+  const base = { deviceId: 'device-a', platform: 'web' };
+  for (const appVersion of ['', '1.0', 'other-game-1.0']) {
+    const body = { ...base, appVersion };
+    assert.deepEqual(replay.publicConfig(fixture.request(body)), { enabled: false, uploadIntervalMs: core.LIMITS.uploadIntervalMs });
+    assert.deepEqual(replay.start(fixture.request(body)), { enabled: false });
+  }
+  assert.equal(fixture.state.saved.length, 0);
+  const allowed = { ...base, appVersion: 'game-1.0' };
+  assert.equal(replay.publicConfig(fixture.request(allowed)).enabled, true);
+  assert.equal(replay.start(fixture.request(allowed)).enabled, true);
+  assert.equal(fixture.state.saved.length, 1);
+  fixture.state.settings = defaults;
+  assert.equal(replay.publicConfig(fixture.request(allowed)).enabled, false);
+  assert.deepEqual(replay.start(fixture.request(allowed)), { enabled: false });
+});
+
+test('an extra version prefix admits only its configured platform', () => {
+  const fixture = serverFixture({ ...defaults, mode: 'percentage', percentage: 100 }, 'game-', 'other-', 'web');
+  fixture.app.db = () => ({ newQuery: () => ({ bind: () => ({ one: result => { result.total = 0; } }) }) });
+  const base = { deviceId: 'device-a' };
+  for (const body of [
+    { ...base, platform: 'android', appVersion: 'other-1.0' },
+    { ...base, platform: 'web', appVersion: '1.0' },
+    { ...base, platform: 'web', appVersion: '' },
+  ]) {
+    assert.equal(replay.publicConfig(fixture.request(body)).enabled, false);
+    assert.deepEqual(replay.start(fixture.request(body)), { enabled: false });
+  }
+  for (const body of [
+    { ...base, platform: 'android', appVersion: 'game-1.0' },
+    { ...base, platform: 'web', appVersion: 'other-1.0' },
+  ]) {
+    assert.equal(replay.publicConfig(fixture.request(body)).enabled, true);
+    assert.equal(replay.start(fixture.request(body)).enabled, true);
+  }
+  assert.equal(fixture.state.saved.length, 2);
+
+  for (const extra of [['other-', ''], ['', 'web']]) {
+    const incomplete = serverFixture({ ...defaults, mode: 'percentage', percentage: 100 }, 'game-', ...extra);
+    assert.equal(replay.publicConfig(incomplete.request({ ...base, platform: 'web', appVersion: 'other-1.0' })).enabled, false);
+  }
+  const unfiltered = serverFixture({ ...defaults, mode: 'percentage', percentage: 100 }, '', 'other-', 'web');
+  assert.equal(replay.publicConfig(unfiltered.request({ ...base, platform: 'android', appVersion: '1.0' })).enabled, true);
+});
+
+function uploadFixture(settings, appVersionPrefix, appVersion, platform, extraAppVersionPrefix, extraPlatform) {
+  const fixture = serverFixture({ ...defaults, mode: 'percentage', percentage: 100, ...settings }, appVersionPrefix, extraAppVersionPrefix, extraPlatform);
   fixture.session({
     id: 'abc123def456ghi', tokenHash: hash('a'.repeat(64)), expiresAt: Date.now() + 60000,
-    accountId: '', deviceId: 'device-a', chunkCount: 0, compressedBytes: 0, rawBytes: 0, eventCount: 0, rooms: '', endedAt: 0,
+    accountId: '', deviceId: 'device-a', platform: platform || 'web', appVersion: appVersion || '', chunkCount: 0, compressedBytes: 0, rawBytes: 0, eventCount: 0, rooms: '', endedAt: 0,
   });
   return fixture;
 }
+
+test('the app version prefix is rechecked against the stored session on upload', () => {
+  const allowed = uploadFixture({}, 'game-', 'game-1.0');
+  assert.deepEqual(replay.upload(allowed.request(validChunk())), { ok: true });
+  const denied = uploadFixture({}, 'game-', '1.0');
+  assert.throws(() => replay.upload(denied.request(validChunk())), { status: 403, message: 'Replay is disabled' });
+  assert.equal(denied.chunks.length, 0);
+});
+
+test('the extra version prefix and platform are rechecked against the stored session on upload', () => {
+  const allowed = uploadFixture({}, 'game-', 'other-1.0', 'web', 'other-', 'web');
+  assert.deepEqual(replay.upload(allowed.request(validChunk())), { ok: true });
+  const denied = uploadFixture({}, 'game-', 'other-1.0', 'android', 'other-', 'web');
+  assert.throws(() => replay.upload(denied.request(validChunk())), { status: 403, message: 'Replay is disabled' });
+  assert.equal(denied.chunks.length, 0);
+  const primary = uploadFixture({}, 'game-', 'game-1.0', 'android', 'other-', 'web');
+  assert.deepEqual(replay.upload(primary.request(validChunk())), { ok: true });
+});
 
 test('a seq past the session chunk limit is answered as a full session', () => {
   const fixture = uploadFixture();

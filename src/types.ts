@@ -20,6 +20,7 @@ export interface ReplayOptions {
   blockSelector?: string;
   maskTextSelector?: string;
   sensitiveText?: () => string[];
+  preserveDataAttributes?: Record<string, readonly string[]>;
   assetBaseUrl?: string;
   initialActive?: boolean;
   subscribeActive?: (listener: (active: boolean) => void) => (() => void);

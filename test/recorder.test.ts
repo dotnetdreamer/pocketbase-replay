@@ -703,6 +703,18 @@ test('privacy scrub covers snapshots, attribute mutations, CSS, inputs and known
   assert.doesNotMatch(style, /private|token/);
 });
 
+test('client data attribute opt-in reaches uploaded DOM events', async () => {
+  const h = harness({ options: { preserveDataAttributes: { 'data-screen': ['language', 'game'] } } });
+  await settle();
+  h.raw({ type: 3, timestamp: 1790500001000, data: { source: 0, attributes: [
+    { id: 2, attributes: { 'data-screen': 'language', 'data-player-name': 'Alice' } },
+  ] } });
+  await h.controller.flush();
+  const mutation = events(h.accepted[0]).find((event) => event.type === 3)!;
+  assert.deepEqual((mutation.data.attributes as { attributes: Record<string, unknown> }[])[0].attributes, { 'data-screen': 'language' });
+  h.controller.stop();
+});
+
 test('server privacy rules reach the recorder after the host rules, skipping empty ones', async () => {
   const h = harness({
     options: { maskTextSelector: ' .host-name ', blockSelector: ' \n ' },

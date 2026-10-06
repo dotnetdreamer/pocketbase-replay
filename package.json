@@ -1,6 +1,6 @@
 {
   "name": "pocketbase-replay",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Session replay, error tracking and structured logs for PocketBase",
   "type": "module",
   "license": "MIT",
