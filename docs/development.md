@@ -46,6 +46,16 @@ It checks actual cron webhook delivery to a local receiver and concurrent
 uploads near the storage limit. It can wait up to 70 seconds for the minute
 job. Set `REPLAY_TEST_PORT` to use another free port
 
+To verify the MCP endpoint for AI agents the same way, with both protocol eras,
+scoped keys, recordings read as text and a refused PocketBase call explained:
+
+```sh
+REPLAY_PB_BIN=/path/to/pocketbase npm run test:mcp
+```
+
+It uses port 8098, or `REPLAY_TEST_PORT`. Both runners create a superuser before
+starting PocketBase, so it never opens its installer page in a browser
+
 For a browser check, leave the fixture running until Ctrl+C:
 
 ```sh

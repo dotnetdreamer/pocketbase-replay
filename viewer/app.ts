@@ -4,6 +4,7 @@ import './style.css';
 import { dayBound, IDLE_KEPT_MS, recordedAt, recoverEvents, shortenIdle, type IdlePeriod, type StoredChunk } from './decode';
 import { keepPlaying } from './player';
 import { installSecurityPanel } from './security';
+import { installAgentsPanel, parseDashboardLink } from './agents';
 import {
   bucketLabel, LogVolumeRequest, OBSERVABILITY_RATE_DEFAULTS, PagedRecords, replayOffset, telemetryQuery, VOLUME_GROUPS, volumeColumns, volumeScale,
   type ErrorOccurrence, type Issue, type IssueAlert, type IssueStatus, type LogEntry, type LogVolume, type ObservabilitySettings, type VolumeColumn,
@@ -89,6 +90,7 @@ async function request(path: string, body?: unknown, method = body === undefined
 }
 
 const securityPanel = installSecurityPanel(request);
+const agentsPanel = installAgentsPanel(request, base);
 const sourceMaps = installSourceMaps(request);
 // Activity below the player; each recording that loads points its seeks at itself. A page cached from before the
 // panel existed gets a detached one, so the dashboard still starts.
@@ -156,6 +158,7 @@ function signOut(): void {
   $('dashboard-tabs').hidden = true;
   $('header-actions').hidden = true;
   securityPanel.reset();
+  agentsPanel.reset();
   $<HTMLDialogElement>('settings-dialog').close();
   $<HTMLDialogElement>('erase-dialog').close();
   $<HTMLDialogElement>('observability-settings-dialog').close();
@@ -522,6 +525,24 @@ async function open(): Promise<void> {
   $('header-actions').hidden = false;
   await search();
   status('');
+  // A link to something since deleted says so, rather than failing the sign-in it followed.
+  try { await follow(); } catch (error) { status(error instanceof Error ? error.message : 'Could not open the link', true); }
+}
+
+// Opens what a link from an AI agent points at: a recording at a moment, an issue or a log.
+async function follow(): Promise<void> {
+  const target = parseDashboardLink(location.hash);
+  if (!target || !token) return;
+  if (target.kind === 'session') {
+    await selectTab('sessions', false);
+    await watch(target.id, target.at);
+  } else if (target.kind === 'issue') {
+    await selectTab('issues');
+    await openIssue(target.id);
+  } else {
+    await selectTab('logs');
+    await openLog(target.id);
+  }
 }
 
 async function loadObservabilitySettings(): Promise<void> {
@@ -1298,6 +1319,7 @@ new ResizeObserver(() => {
   }, 100);
 }).observe($('player'));
 document.addEventListener('visibilitychange', scheduleAlertRefresh);
-window.addEventListener('pagehide', () => { dashboardDisposed = true; stopAlertRefresh(); closePlayer(); securityPanel.reset(); });
+window.addEventListener('pagehide', () => { dashboardDisposed = true; stopAlertRefresh(); closePlayer(); securityPanel.reset(); agentsPanel.reset(); });
+window.addEventListener('hashchange', () => { if (!$('dashboard').hidden) run(follow); });
 window.addEventListener('pageshow', () => { dashboardDisposed = false; scheduleAlertRefresh(); });
 if (token) void open().catch(() => { signOut(); status('Sign in again to view recordings'); });

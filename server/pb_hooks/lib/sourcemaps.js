@@ -233,14 +233,10 @@ function resolver(app, appVersion) {
   return { resolve: resolve, top: top, lines: sourceLines, count: function () { return available().length; } };
 }
 
-// One stored occurrence's frames, with original positions and code where its version has maps.
-function frames(e) {
-  admin(e);
-  const id = base.text(e.request.pathValue('id'), 'id', 15, true);
-  let row;
-  try { row = e.app.findRecordById('replay_errors', id); } catch (_) { base.fail(404, 'Not found'); }
+// A stored occurrence's frames, with original positions and code where its version has maps.
+function mappedFrames(app, row) {
   const appVersion = row.getString('appVersion');
-  const lookup = installed(e.app) ? resolver(e.app, appVersion) : null;
+  const lookup = installed(app) ? resolver(app, appVersion) : null;
   let mapped = 0;
   const items = core.parseStack(row.getString('stack')).map(function (frame, index) {
     const item = { raw: frame.raw, function: frame.function, file: frame.file, line: frame.line, column: frame.column };
@@ -255,6 +251,14 @@ function frames(e) {
   return { id: row.id, appVersion: appVersion, sourceMaps: lookup ? lookup.count() : 0, mapped: mapped, frames: items };
 }
 
+function frames(e) {
+  admin(e);
+  const id = base.text(e.request.pathValue('id'), 'id', 15, true);
+  let row;
+  try { row = e.app.findRecordById('replay_errors', id); } catch (_) { base.fail(404, 'Not found'); }
+  return mappedFrames(e.app, row);
+}
+
 function route(e, name) {
   e.response.header().set('Cache-Control', 'no-store');
   e.response.header().set('X-Content-Type-Options', 'nosniff');
@@ -264,4 +268,4 @@ function route(e, name) {
   }
 }
 
-module.exports = { upload: upload, list: list, remove: remove, frames: frames, resolver: resolver, installed: installed, route: route };
+module.exports = { upload: upload, list: list, remove: remove, frames: frames, mappedFrames: mappedFrames, resolver: resolver, installed: installed, route: route };

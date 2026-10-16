@@ -62,16 +62,23 @@ pb_hooks/lib/sourcemap-core.js
 pb_hooks/720_pocketbase.pb.js
 pb_hooks/lib/pocketbase.js
 pb_hooks/lib/pocketbase-core.js
+pb_hooks/725_mcp.pb.js
+pb_hooks/lib/mcp.js
+pb_hooks/lib/mcp-core.js
+pb_hooks/lib/activity.js
+pb_hooks/lib/activity-core.js
+pb_hooks/lib/gzip.js
 pb_hooks/replay-dash/
 pb_migrations/1795600000_replay.js
 pb_migrations/1795600002_observability.js
 pb_migrations/1795600003_replay_trigger.js
 pb_migrations/1795600004_sourcemaps.js
+pb_migrations/1795600005_mcp.js
 ```
 
 Restart PocketBase to create `replay_settings`, `replay_sessions`,
-`replay_chunks`, the error, log and alert collections, and the source map
-collections
+`replay_chunks`, the error, log and alert collections, the source map
+collections, and the collections for [AI agents](ai-agents.md)
 
 The migration refuses an existing collection with a conflicting name and never
 imports a full database schema
@@ -98,6 +105,9 @@ recordings. Both features start disabled, including on upgraded servers
 
 The source map migration adds its own collections. Until maps are uploaded,
 errors group exactly as before
+
+The AI agents migration adds collections for agent keys, their audit log and
+recordings read as text. Agents have no access until a superuser creates a key
 
 ## Dedicated replay database
 
@@ -182,6 +192,23 @@ ID and optional recording ID, so it can link failures that happen before the
 tracing hook runs. Clients omit it unless their latest configuration enables
 tracing; changes take effect at their next settings check. See
 [request log links](integration.md#link-calls-to-pocketbases-request-log)
+
+## AI agents
+
+[AI agents](ai-agents.md) connect to `/api/replay/mcp` with a key from
+**AI agents** in the dashboard and need no server settings. Two optional
+settings change how they work:
+
+```text
+# Which recordings are read ahead of time while a key exists: errors (default), all or off
+REPLAY_MCP_INDEX=errors
+# Browser origins allowed to call the endpoint, separated by commas
+REPLAY_MCP_ORIGINS=https://inspector.example.com
+```
+
+Recordings outside `REPLAY_MCP_INDEX` are read when an agent first asks for
+them. Coding agents send no `Origin` header, so `REPLAY_MCP_ORIGINS` is only
+for browser-based MCP clients
 
 ## Behind a reverse proxy
 

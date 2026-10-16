@@ -37,6 +37,11 @@ for PocketBase, with an rrweb recorder and a private dashboard
 - Configure errors and logs independently, with their own retention and a
   shared daily storage limit
 - Optionally require revocable ingestion keys, verified accounts, or both
+- Let AI coding agents such as Claude Code, Cursor and VS Code debug from
+  production data over MCP, at one URL on your own server. Agents read issues
+  with source-mapped code, logs, and recordings as text, with every refused
+  PocketBase call explained, using read-only keys you scope, revoke and audit.
+  See [AI agents](docs/ai-agents.md)
 
 Recording, network and console capture, error tracking and logs are off by
 default. Dashboard access requires a PocketBase superuser
@@ -70,7 +75,7 @@ low/moderate traffic on x86. Sentry's cover a deployment with Session Replay
 
 | Project | Features | Backend |
 | --- | --- | --- |
-| **PocketBase Replay** | DOM and Flutter screen replay, JavaScript, Dart and PocketBase server errors, logs and alerts, and PocketBase calls explained by their API rules | [One PocketBase process with SQLite](docs/installation.md) |
+| **PocketBase Replay** | DOM and Flutter screen replay, JavaScript, Dart and PocketBase server errors, logs and alerts, PocketBase calls explained by their API rules, and read-only MCP access for AI agents | [One PocketBase process with SQLite](docs/installation.md) |
 | **PostHog** | [Replay, product analytics, flags and experiments](https://posthog.com/docs) | [PostgreSQL, ClickHouse, Redpanda, cache and object storage](https://github.com/PostHog/posthog/blob/master/docker-compose.hobby.yml) |
 | **OpenReplay** | [Replay, analytics and co-browsing](https://github.com/openreplay/openreplay) | [PostgreSQL, ClickHouse, cache and object storage](https://github.com/openreplay/openreplay/blob/main/scripts/docker-compose/docker-compose.yaml) |
 | **Sentry** | [Errors, replay, tracing, profiling and logs](https://github.com/getsentry/self-hosted/blob/26.9.0/sentry/sentry.conf.example.py) | [PostgreSQL, ClickHouse, Kafka, caches and object storage](https://github.com/getsentry/self-hosted/blob/26.9.0/docker-compose.yml) |
@@ -260,6 +265,18 @@ and logs also work when replay recording is off or no recorder is supplied
 See [errors and logs](docs/observability.md) for configuration, manual capture,
 privacy, alert behavior and the ingestion API
 
+### 5. Connect an AI agent
+
+In `/dash/replay`, open **AI agents**, create a read-only key, and copy the
+setup for your agent. For Claude Code:
+
+```sh
+claude mcp add --transport http --scope user pocketbase-replay https://replay.example.com/api/replay/mcp --header "Authorization: Bearer pbr_mcp_…"
+```
+
+Then ask what is broken in production, or to fix an issue. See
+[AI agents](docs/ai-agents.md) for Cursor, VS Code and other agents
+
 ## Privacy and compatibility
 
 - Input values and editable text are masked by default
@@ -285,6 +302,7 @@ Use HTTPS for remote deployments and keep superuser tokens out of your frontend
 | [Configuration](docs/configuration.md) | Sampling, trigger mode, retention, storage budgets, privacy rules, playback and the activity panel |
 | [Errors and logs](docs/observability.md) | Capture options, issue resolution, alerts, source maps, searchable logs and ingestion |
 | [Upload security and accounts](docs/authentication.md) | Optional API keys, verified-account requirements, token verification and account deletion |
+| [AI agents](docs/ai-agents.md) | MCP setup for Claude Code, Cursor and other agents, tools, recordings as text, read-only keys and the audit log |
 | [Privacy and limits](docs/privacy-and-limits.md) | Captured data, retries, recording limits and compatibility |
 | [Development](docs/development.md) | Local checks, performance measurement and releases |
 | [Platform plugins](plugins/README.md) | Capacitor and Flutter plugins, future React Native and NativeScript integrations, and plugin architecture |

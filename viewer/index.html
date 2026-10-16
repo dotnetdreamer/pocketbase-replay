@@ -23,6 +23,7 @@
       <button id="open-settings" type="button" title="Sampling, retention and privacy rules"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="3.5" fill="currentColor" stroke="none"/></svg><span>Recording</span></button>
       <button id="open-observability-settings" type="button" title="Error tracking, logs and alerts"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 12h4l2.5-7 5 14 2.5-7h5"/></svg><span>Diagnostics</span></button>
       <button id="open-security" type="button" title="API keys, sign-in and rate limits"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.8l7.5 3v5.7c0 4.8-3.2 8.3-7.5 9.7-4.3-1.4-7.5-4.9-7.5-9.7V5.8z"/><path d="M8.8 12.2l2.2 2.2 4.2-4.4"/></svg><span>Security</span></button>
+      <button id="open-agents" type="button" title="Read-only access for AI coding agents"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5l1.9 5.1 5.1 1.9-5.1 1.9-1.9 5.1-1.9-5.1-5.1-1.9 5.1-1.9z"/><path d="M18.5 15.5l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8z"/></svg><span>AI agents</span></button>
       <button id="logout" type="button" class="sign-out" title="Sign out" aria-label="Sign out"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9.5 4.5h-3a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h3"/><path d="M14.5 8l4.5 4-4.5 4"/><path d="M19 12H9.5"/></svg></button>
     </div>
   </header>
@@ -99,6 +100,53 @@
       <p id="security-error" class="dialog-error" role="alert"></p>
       <p id="security-state" role="status" aria-live="polite"></p>
       <div class="dialog-actions"><button id="close-security" type="button" class="secondary">Close</button></div>
+    </dialog>
+    <dialog id="agents-dialog" class="card" aria-labelledby="agents-title">
+      <h2 id="agents-title">AI agents</h2>
+      <p class="hint">Let coding agents such as Claude Code, Cursor and VS Code read issues, logs and recordings over MCP<br>Agents get recordings as text: pages, clicks, form fields and PocketBase calls, never field values<br>Keys can only read, each limited to what you choose, and every request is listed below</p>
+      <div class="agents-endpoint">
+        <span>Server URL</span>
+        <code id="agents-url"></code>
+        <button id="agents-copy-url" type="button" class="secondary">Copy</button>
+      </div>
+      <section class="security-keys" aria-labelledby="agents-keys-title">
+        <h3 id="agents-keys-title">Agent keys</h3>
+        <ul id="agents-keys" class="security-key-list"></ul>
+        <p id="agents-keys-empty" class="hint">No agent keys yet</p>
+        <form id="agents-create" class="security-form agents-create">
+          <label>Key name<input name="label" maxlength="64" required autocomplete="off" placeholder="Claude Code on my laptop"></label>
+          <fieldset>
+            <legend>Can read</legend>
+            <div class="agents-scopes">
+              <label class="check"><input name="scope" type="checkbox" value="issues" checked><span><strong>Issues and errors</strong><small>Stack traces with source-mapped code</small></span></label>
+              <label class="check"><input name="scope" type="checkbox" value="logs" checked><span><strong>Logs</strong><small>Messages and attributes</small></span></label>
+              <label class="check"><input name="scope" type="checkbox" value="recordings" checked><span><strong>Recordings</strong><small>What users did, as text</small></span></label>
+            </div>
+          </fieldset>
+          <div class="agents-create-row">
+            <label>Expires<select name="expires"><option value="90">In 90 days</option><option value="30">In 30 days</option><option value="365">In a year</option><option value="0">Never</option></select></label>
+            <button type="submit">Create key</button>
+          </div>
+        </form>
+        <div id="agents-created" class="security-created-key" hidden>
+          <label>Copy this key now<input id="agents-key-value" readonly autocomplete="off" spellcheck="false"></label>
+          <button id="agents-copy-key" type="button" class="secondary">Copy key</button>
+          <p class="hint">You won’t see it again<br>Set it up in your agent:</p>
+          <div id="agents-clients" class="agents-clients" role="tablist" aria-label="Agent"></div>
+          <p id="agents-where" class="agents-where"></p>
+          <pre class="agents-snippet"><code id="agents-snippet"></code></pre>
+          <button id="agents-copy-snippet" type="button" class="secondary">Copy setup</button>
+          <p id="agents-snippet-hint" class="hint"></p>
+        </div>
+      </section>
+      <section class="security-keys" aria-labelledby="agents-activity-title">
+        <div class="agents-activity-head"><h3 id="agents-activity-title">Recent agent requests</h3><button id="agents-refresh" type="button" class="secondary">Refresh</button></div>
+        <ol id="agents-activity" class="agents-activity"></ol>
+        <p id="agents-activity-empty" class="hint">No agent requests yet</p>
+      </section>
+      <p id="agents-error" class="dialog-error" role="alert"></p>
+      <p id="agents-state" role="status" aria-live="polite"></p>
+      <div class="dialog-actions"><button id="close-agents" type="button" class="secondary">Close</button></div>
     </dialog>
     <dialog id="observability-settings-dialog" class="card" aria-labelledby="observability-settings-title">
       <h2 id="observability-settings-title">Diagnostics settings</h2>

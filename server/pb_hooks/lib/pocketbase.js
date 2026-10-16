@@ -90,12 +90,17 @@ function explain(e) {
   if (!Array.isArray(body.requests) || body.requests.length > MAX_REQUESTS) base.fail(400, 'Invalid requests');
   let session;
   try { session = e.app.findRecordById('replay_sessions', sessionId); } catch (_) { base.fail(404, 'Replay session not found'); }
+  return answers(e.app, session, body.requests);
+}
+
+// The answers for up to 200 calls of one recording, each as the dashboard asks about it.
+function answers(app, session, requests) {
   const started = session.getFloat('startedAt');
   const from = started - WINDOW_MS;
   const to = Math.min(Math.max(started, session.getFloat('lastSeenAt'), session.getFloat('endedAt')) + WINDOW_MS, from + MAX_WINDOW_MS);
   const items = [];
   const ids = [];
-  body.requests.forEach(function (value) {
+  requests.slice(0, MAX_REQUESTS).forEach(function (value) {
     const item = core.explainInput(value);
     if (!item) return;
     items.push(item);
@@ -103,19 +108,19 @@ function explain(e) {
   });
   const result = { logs: true, items: [] };
   try {
-    const logs = e.app.settings().logs;
+    const logs = app.settings().logs;
     if (logs && logs.maxDays === 0) result.logs = false;
   } catch (_) { /* Unknown settings leave the answer to the log read. */ }
   let logs = {};
   let issues = {};
   if (ids.length) {
-    try { logs = logRows(e.app, ids, from, to); } catch (_) { result.logs = false; }
-    try { issues = issueRows(e.app, ids, from, to); } catch (_) { issues = {}; }
+    try { logs = logRows(app, ids, from, to); } catch (_) { result.logs = false; }
+    try { issues = issueRows(app, ids, from, to); } catch (_) { issues = {}; }
   }
   const collections = {};
   function collectionOf(name) {
     if (!Object.prototype.hasOwnProperty.call(collections, name)) {
-      try { collections[name] = e.app.findCachedCollectionByNameOrId(name); } catch (_) { collections[name] = null; }
+      try { collections[name] = app.findCachedCollectionByNameOrId(name); } catch (_) { collections[name] = null; }
     }
     return collections[name];
   }
@@ -138,7 +143,7 @@ function explain(e) {
       if (!Object.prototype.hasOwnProperty.call(records, key) && lookups < MAX_RECORD_LOOKUPS) {
         lookups++;
         try {
-          e.app.findRecordById(item.collection, item.record);
+          app.findRecordById(item.collection, item.record);
           records[key] = 'exists';
         } catch (error) {
           records[key] = /no rows in result set/.test(String(error && error.message || error)) ? 'missing' : '';
@@ -171,4 +176,4 @@ function route(e, name) {
   }
 }
 
-module.exports = { link: link, probe: probe, explain: explain, route: route };
+module.exports = { link: link, probe: probe, explain: explain, answers: answers, route: route };

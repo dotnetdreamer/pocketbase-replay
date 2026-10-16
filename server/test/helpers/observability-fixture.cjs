@@ -59,7 +59,12 @@ function fixture() {
       .map(data => new Row(collections.get(name), data));
   }
   const app = {
-    store: () => ({ get: key => store.get(key), set: (key, value) => store.set(key, value) }),
+    store: () => ({
+      get: key => store.get(key), set: (key, value) => store.set(key, value),
+      setFunc: (key, fn) => store.set(key, fn(store.get(key))),
+      getOrSet: (key, fn) => { if (!store.has(key)) store.set(key, fn()); return store.get(key); },
+      has: key => store.has(key), remove: key => { store.delete(key); },
+    }),
     findCollectionByNameOrId: name => { if (!collections.has(name)) throw new Error('Missing collection ' + name); return collections.get(name); },
     findCachedCollectionByNameOrId: name => app.findCollectionByNameOrId(name),
     findRecordsByFilter: records,
@@ -117,7 +122,12 @@ function fixture() {
   global.DynamicModel = function (value) { Object.assign(this, value); };
   global.arrayOf = () => [];
   global.$dbx = { exp: (sql, params) => ({ sql, params }) };
-  global.$security = { sha256: hash, equal: (a, b) => a === b, randomString: length => String(++tokens).padStart(length, 'r') };
+  global.$security = {
+    sha256: hash, equal: (a, b) => a === b, randomString: length => String(++tokens).padStart(length, 'r'),
+    randomStringWithAlphabet: (length) => String(++tokens).padStart(length, 'a'),
+  };
+  // PocketBase's toString(value, maxBytes): a body's text, or bytes as UTF-8.
+  global.toString = (value) => typeof value === 'string' ? value : value instanceof Uint8Array ? Buffer.from(value).toString('utf8') : String(value);
   global.$os = { getenv: () => '' };
   global.readerToString = value => value;
   const webhooks = [];

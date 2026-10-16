@@ -101,11 +101,21 @@ app token and refuses credentials admitted anonymously. See
 
 Uploads use per-session credentials, gzip compression, sequence numbers and idempotent retries
 
-All replay reads require a superuser, and client claims never authorize replay reads
+All replay reads require a superuser, or an [AI agent](ai-agents.md) key a
+superuser created, and client claims never authorize replay reads
 
 Errors and logs use separate short-lived upload credentials. Linking an entry
 to a recording requires that recording's upload credential and matching
 account and device metadata. Error, log and alert reads also require a superuser
+or an agent key with that scope
+
+Agent keys only read issues, logs and recordings, each within the scopes it was
+given, and every request is kept in an audit log for 30 days. Agents read
+recordings as text: pages, element labels, form fields changed without their
+values, calls, console output and errors, all from the masked recording. That
+text is stored with the recording and deleted with it. Tool results go to the
+agent's model provider, so give each key only the scopes it needs. See
+[security and privacy](ai-agents.md#security-and-privacy)
 
 Ingestion keys do not divide the server into projects or separate budgets.
 Existing server rate and storage limits remain shared, and server-enforced

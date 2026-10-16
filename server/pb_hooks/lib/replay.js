@@ -446,7 +446,11 @@ function remove(e) {
   admin(e);
   let session;
   try { session = e.app.findRecordById('replay_sessions', e.request.pathValue('id')); } catch (_) { core.fail(404, 'Replay session not found'); }
-  e.app.delete(session);
+  // One statement for a long recording's activity, rather than a cascade of record deletes.
+  e.app.runInTransaction(function (tx) {
+    removeActivity(tx, 'id = {:id}', { id: session.id });
+    tx.delete(session);
+  });
   return { ok: true };
 }
 
@@ -456,11 +460,17 @@ function observability(app) {
   return require('./observability.js');
 }
 
+// What agents read from recordings goes with them. Raw SQL deletes skip PocketBase's cascade, so it is removed here.
+function removeActivity(tx, where, params) {
+  require('./activity.js').removeFor(tx, where, params);
+}
+
 function removeSessions(tx, filter, params, limit) {
   const rows = tx.findRecordsByFilter('replay_sessions', filter, 'startedAt,id', limit, 0, params);
   if (!rows.length) return 0;
   const ids = {};
   const list = rows.map(function (row, index) { ids['id' + index] = row.id; return '{:id' + index + '}'; }).join(', ');
+  removeActivity(tx, 'id IN (' + list + ')', ids);
   tx.db().newQuery('DELETE FROM replay_chunks WHERE session IN (' + list + ')').bind(ids).execute();
   tx.db().newQuery('DELETE FROM replay_sessions WHERE id IN (' + list + ')').bind(ids).execute();
   return rows.length;
@@ -502,6 +512,7 @@ function deleteLocalAccount(e) {
     const params = { account: e.record.id };
     const telemetry = observability(tx);
     if (telemetry) telemetry.eraseAccountAll(tx, e.record.id);
+    removeActivity(tx, 'accountId = {:account}', params);
     tx.db().newQuery('DELETE FROM replay_chunks WHERE session IN (SELECT id FROM replay_sessions WHERE accountId = {:account})').bind(params).execute();
     tx.db().newQuery('DELETE FROM replay_sessions WHERE accountId = {:account}').bind(params).execute();
   });

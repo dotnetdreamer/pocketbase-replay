@@ -18,4 +18,8 @@ services:
       REPLAY_SOURCEMAP_KEY: ${REPLAY_SOURCEMAP_KEY:-}
       # on puts each traced SDK call's ID into PocketBase's request log, for request explanations; off unless set to on.
       REPLAY_TRACE_REQUESTS: ${REPLAY_TRACE_REQUESTS:-}
+      # Which recordings are read ahead for AI agents: errors (default), all or off. Others are read on first request.
+      REPLAY_MCP_INDEX: ${REPLAY_MCP_INDEX:-}
+      # Comma-separated browser origins allowed to call the MCP endpoint; agents send none and need nothing here.
+      REPLAY_MCP_ORIGINS: ${REPLAY_MCP_ORIGINS:-}
     restart: unless-stopped
