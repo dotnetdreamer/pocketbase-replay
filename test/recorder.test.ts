@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { gzipSync, gunzipSync, strFromU8, strToU8 } from 'fflate';
+import { gzipSync, gunzipSync, strFromU8, strToU8, zlibSync } from 'fflate';
 import { createRequire } from 'node:module';
 import { createReplay, REPLAY_LIMITS, triggerLabel } from '../src/engine';
 import { createObservability } from '../src/observability';
 import { fetchTransport, ReplayHttpError } from '../src/index';
 import { serializeEvent } from '../src/privacy';
-import type { ReplayChunk, ReplayEvent, ReplayMetadata, ReplayOptions, ReplayRuntime } from '../src/types';
+import type { RecorderOptions, ReplayChunk, ReplayEvent, ReplayMetadata, ReplayOptions, ReplayRuntime } from '../src/types';
 
 async function settle(): Promise<void> { for (let i = 0; i < 25; i++) await Promise.resolve(); }
 
@@ -1331,4 +1331,196 @@ test('a full snapshot larger than the buffer keeps its meta event, so kept histo
     assert.equal(played.events[0].type, 4);
     assert.ok(played.events.some((event) => event.type === 2));
   } finally { replay.stop(); }
+});
+
+// An actual PNG with a gray masked quarter and noisy public pixels, large enough to cross a chunk boundary.
+function nativeScreenshotPng(): string {
+  const width = 256, height = 192, pixels = new Uint8Array((width * 4 + 1) * height);
+  let random = 123456789;
+  for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+    const at = y * (width * 4 + 1) + 1 + x * 4;
+    for (let channel = 0; channel < 3; channel++) {
+      random ^= random << 13; random ^= random >>> 17; random ^= random << 5;
+      pixels[at + channel] = x < 64 ? 158 : random & 255;
+    }
+    pixels[at + 3] = 255;
+  }
+  const chunk = (name: string, data: Uint8Array): Buffer => {
+    const bytes = Buffer.concat([Buffer.from(name), data]);
+    let crc = -1;
+    for (const byte of bytes) { crc ^= byte; for (let bit = 0; bit < 8; bit++) crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0); }
+    const length = Buffer.alloc(4), checksum = Buffer.alloc(4);
+    length.writeUInt32BE(data.length); checksum.writeUInt32BE((crc ^ -1) >>> 0);
+    return Buffer.concat([length, bytes, checksum]);
+  };
+  const header = Buffer.alloc(13); header.writeUInt32BE(width, 0); header.writeUInt32BE(height, 4); header[8] = 8; header[9] = 6;
+  return `data:image/png;base64,${Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', header), chunk('IDAT', zlibSync(pixels)), chunk('IEND', new Uint8Array())]).toString('base64')}`;
+}
+
+function screenshotHarness(image: string, capability: boolean, initial: HarnessSetup = {}) {
+  const h = harness(initial), settings: RecorderOptions[] = [];
+  let emit: ((event: ReplayEvent) => void) | undefined;
+  let timestamp = 1790500000000;
+  const snapshot = () => {
+    emit?.({ type: 4, timestamp: timestamp++, data: { href: 'capacitor://localhost/orders', width: 256, height: 192 } });
+    emit?.({ type: 2, timestamp: timestamp++, data: { node: { type: 0, id: 1, childNodes: [
+      { type: 2, id: 3, tagName: 'html', attributes: {}, childNodes: [
+        { type: 2, id: 5, tagName: 'body', attributes: {}, childNodes: [
+          { type: 2, id: 6, tagName: 'img', attributes: { src: image, style: 'width:256px;height:192px' }, childNodes: [] },
+          { type: 2, id: 8, tagName: 'div', attributes: { style: 'opacity:0' }, childNodes: [
+            { type: 2, id: 9, tagName: 'div', attributes: { style: 'left:0;top:0;width:64px;height:192px' }, childNodes: [{ type: 3, id: 10, textContent: '*' }] },
+            { type: 2, id: 11, tagName: 'button', attributes: {}, childNodes: [{ type: 3, id: 12, textContent: 'Pay now' }] },
+          ] },
+        ] },
+      ] },
+    ] }, initialOffset: { top: 0, left: 0 } } });
+  };
+  // Configuration fetches are asynchronous, so replacing the recorder before settling exercises the real engine path.
+  h.runtime.loadRecorder = async () => ({ imageSnapshots: capability, start(callback, options) { emit = callback; settings.push(options); snapshot(); return () => { emit = undefined; }; }, snapshot });
+  return { ...h, settings, send: (data: ReplayEvent['data'], type = 3) => emit?.({ type, timestamp: timestamp++, data }) };
+}
+
+test('only an image-snapshot recorder can retain a bounded masked PNG while server image recording is off', async () => {
+  const image = nativeScreenshotPng();
+  assert.ok(image.length > REPLAY_LIMITS.bufferBytes && image.length <= 256 * 1024 + 22);
+  for (const capability of [false, true]) {
+    const h = screenshotHarness(image, capability, { rules: { recordImages: false } });
+    try {
+      await settle();
+      h.send({ source: 0, texts: [], removes: [], adds: [], attributes: [{ id: 6, attributes: { src: image } }] });
+      await h.controller.flush();
+      const uploaded = h.accepted.flatMap(events);
+      const snapshot = uploaded.find((event) => event.type === 2)!;
+      const html = (snapshot.data.node as any).childNodes[0], imageNode = html.childNodes[0].childNodes[0];
+      assert.equal(imageNode.attributes.src, capability ? image : '');
+      const update = uploaded.find((event) => event.type === 3 && event.data.source === 0)!;
+      assert.equal((update.data.attributes as any[])[0].attributes.src, capability ? image : '');
+      assert.equal(h.controller.getMetrics().droppedEvents, 0);
+    } finally { h.controller.stop(); }
+  }
+});
+
+test('a large masked native snapshot survives trigger buffering with its meta, safe target and activity', async () => {
+  const { recoverEvents } = await import('../viewer/decode');
+  const image = nativeScreenshotPng();
+  const h = screenshotHarness(image, true, { rules: { recordImages: false, uploadMode: 'trigger' } });
+  try {
+    await settle();
+    h.send({ source: 2, type: 2, id: 9, x: 32, y: 96 });
+    h.send({ source: 2, type: 2, id: 11, x: 200, y: 160 });
+    h.send({ tag: 'pbr/network', payload: { url: 'https://app.example.com/api/health', method: 'GET', status: 200, duration: 5 } }, 5);
+    assert.equal(h.accepted.length, 0);
+    assert.ok((await h.controller.trigger('native-report'))?.sessionId);
+    await settle(); await h.controller.flush(); await settle();
+    assert.equal(h.accepted[0].hasSnapshot, true);
+    const recovered = recoverEvents(h.accepted);
+    assert.equal(recovered.gaps, 0);
+    assert.deepEqual(recovered.events.slice(0, 2).map((event) => event.type), [4, 2]);
+    assert.ok(JSON.stringify(recovered.events[1]).includes(image), 'the exact pre-masked PNG must survive serialization');
+    assert.ok(JSON.stringify(recovered.events[1]).includes('left:0;top:0;width:64px;height:192px'));
+    assert.ok(JSON.stringify(recovered.events[1]).includes('Pay now'));
+    const clicks = recovered.events.filter((event) => event.type === 3 && (event.data as any).source === 2).map((event) => event.data);
+    assert.deepEqual(clicks, [{ source: 2, type: 2, id: 9, x: 32, y: 96 }, { source: 2, type: 2, id: 11, x: 200, y: 160 }]);
+    assert.ok(recovered.events.some((event) => event.type === 5 && (event.data as any).tag === 'pbr/network'));
+    assert.ok(recovered.events.some((event) => event.type === 5 && (event.data as any).tag === 'pbr/trigger'));
+    assert.equal(h.controller.getMetrics().droppedEvents, 0);
+  } finally { h.controller.stop(); }
+});
+
+test('image snapshot capability leaves ordinary images gated and forwards server image settings to capture', async () => {
+  const h = screenshotHarness(nativeScreenshotPng(), true, { rules: { recordImages: false } });
+  const ordinary = 'data:image/svg+xml;base64,PHN2Zy8+';
+  const source = (src: string) => ({ source: 0, texts: [], removes: [], adds: [], attributes: [{ id: 20, attributes: { src } }] });
+  try {
+    await settle(); assert.equal(h.settings[0].recordImages, false);
+    h.send(source(ordinary));
+    h.send(source(`data:image/png;base64,iVBORw0KGgo${'A'.repeat(256 * 1024)}`));
+    await h.controller.flush();
+    const before = h.accepted.flatMap(events).filter((event) => event.type === 3 && event.data.source === 0);
+    assert.deepEqual(before.map((event) => (event.data.attributes as any[])[0].attributes.src), ['', '']);
+    h.rules({ recordImages: true }); await h.controller.refresh();
+    assert.equal(h.settings.length, 2); assert.equal(h.settings[1].recordImages, true);
+    h.send(source(ordinary)); await h.controller.flush();
+    const after = h.accepted.flatMap(events).filter((event) => event.type === 3 && event.data.source === 0);
+    assert.equal((after.at(-1)!.data.attributes as any[])[0].attributes.src, ordinary);
+  } finally { h.controller.stop(); }
+});
+
+// Frames as a platform recorder sends them, on the engine's clock: a meta event and full snapshot whenever the engine
+// asks for one, and a new screen image every second. Base64 of random bytes compresses as little as real PNG data.
+function frameRecorder(h: ReturnType<typeof harness>, kib: number) {
+  let clock = 1790500000000, frame = 0;
+  let emit: ((event: ReplayEvent) => void) | undefined;
+  const image = () => {
+    const bytes = new Uint8Array(kib * 1024);
+    let state = ++frame * 2654435761 >>> 0;
+    for (let index = 0; index < bytes.length; index++) { state ^= state << 13; state ^= state >>> 17; state ^= state << 5; bytes[index] = state & 255; }
+    return `data:image/png;base64,iVBORw0KGgo${Buffer.from(bytes).toString('base64').replace(/=+$/, '')}`;
+  };
+  const snapshot = () => {
+    emit?.({ type: 4, timestamp: clock, data: { href: 'capacitor://localhost/', width: 390, height: 844 } });
+    emit?.({ type: 2, timestamp: clock, data: { node: { type: 0, id: 1, childNodes: [{ type: 2, id: 6, tagName: 'img', attributes: { src: image() }, childNodes: [] }] }, initialOffset: { top: 0, left: 0 } } });
+  };
+  h.runtime.loadRecorder = async () => ({ imageSnapshots: true, start(callback) { emit = callback; snapshot(); return () => { emit = undefined; }; }, snapshot });
+  return {
+    clock: () => clock,
+    async seconds(count: number, every = 1) {
+      for (let index = 1; index <= count; index++) {
+        await h.advance(1000); clock += 1000;
+        if (index % every === 0) emit?.({ type: 3, timestamp: clock, data: { source: 0, texts: [], adds: [], removes: [], attributes: [{ id: 6, attributes: { src: image() } }] } });
+        await settle();
+      }
+    },
+  };
+}
+
+function frameTimes(chunks: ReplayChunk[]): number[] {
+  const times = chunks.flatMap(events).filter((event) => event.type === 2 || (event.type === 3 && event.data.source === 0));
+  return [...new Set(times.map((event) => event.timestamp))].sort((a, b) => a - b);
+}
+
+test('masked frames smaller than an upload are sent as they are sealed instead of being dropped at the next flush', async () => {
+  for (const kib of [20, 60, 190]) {
+    const h = harness();
+    const frames = frameRecorder(h, kib);
+    try {
+      await settle();
+      await frames.seconds(10);
+      assert.ok(h.accepted.length > 0, `${kib} KiB frames upload before the flush timer`);
+      await frames.seconds(50);
+      await h.controller.flush();
+      assert.equal(frameTimes(h.accepted).length, 61, `${kib} KiB: the snapshot and all 60 frames arrive`);
+      assert.equal(h.controller.getMetrics().droppedChunks, 0);
+      for (const chunk of h.accepted) {
+        // The server takes at most 384 KiB of gzip data in a 512 KiB body.
+        assert.ok(JSON.stringify(chunk).length <= 512 * 1024 && Buffer.from(chunk.data, 'base64').length <= 384 * 1024);
+      }
+    } finally { h.controller.stop(); }
+  }
+});
+
+test('trigger mode keeps a minute of an occasionally changing screen, and at least half its allowance of constant change', async () => {
+  // A new frame every 10 s keeps the designed minute or more. Frames every second fill the 6 MiB allowance first:
+  // its newer half stays, about 38 frames of 60 KiB or 12 of 190 KiB, where one part could only be dropped whole.
+  for (const [kib, every, minimumMs] of [[100, 10, 60000], [60, 1, 37000], [190, 1, 10000]] as const) {
+    const h = harness({ rules: { uploadMode: 'trigger' } });
+    const frames = frameRecorder(h, kib);
+    try {
+      await settle();
+      for (let elapsed = 0; elapsed < 150; elapsed += 10) {
+        await frames.seconds(10, every);
+        // Trimming the oldest part is not a drop; losing everything kept is.
+        assert.equal(h.controller.getMetrics().droppedChunks, 0, `${kib} KiB: nothing kept is lost at ${elapsed + 10} s`);
+      }
+      assert.equal(h.accepted.length, 0);
+      const at = frames.clock();
+      assert.ok((await h.controller.trigger('report'))?.sessionId);
+      await settle(); await h.controller.flush(); await settle();
+      const kept = frameTimes(h.accepted);
+      assert.ok(at - kept[0] >= minimumMs, `${kib} KiB every ${every} s: kept ${at - kept[0]} ms before the trigger`);
+      // What was kept is whole: every frame from the snapshot opening it up to the trigger.
+      if (every === 1) assert.deepEqual(kept, Array.from({ length: (at - kept[0]) / 1000 + 1 }, (_, index) => kept[0] + index * 1000));
+      assert.equal(h.controller.getMetrics().droppedChunks, 0);
+    } finally { h.controller.stop(); }
+  }
 });

@@ -36,6 +36,8 @@ export interface ReplayOptions {
   // While recording, and while the server records PocketBase calls, each call this client sends is noted with its
   // collection, action, status and counts, never the values sent or returned.
   pocketbase?: PocketBaseClient;
+  // Platform plugins can supply a recorder for their rendered surface instead of the browser DOM.
+  recorder?: RecorderAdapter;
 }
 
 export interface ReplayMetrics {
@@ -90,6 +92,7 @@ export interface ReplayChunk {
 
 // Server-controlled extras for the recorder; never set by the host app.
 export interface RecorderOptions extends ReplayOptions {
+  recordImages?: boolean;
   recordNetwork?: boolean;
   recordConsole?: boolean;
   recordPocketbase?: boolean;
@@ -99,6 +102,8 @@ export interface RecorderOptions extends ReplayOptions {
 }
 
 export interface RecorderAdapter {
+  // Image snapshots contain already-masked, bounded PNGs supplied by a platform recorder.
+  imageSnapshots?: boolean;
   start: (emit: (event: ReplayEvent) => void, options: RecorderOptions) => (() => void) | undefined;
   snapshot: () => void;
 }

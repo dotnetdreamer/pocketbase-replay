@@ -135,6 +135,20 @@ test('data: images are blanked unless the record_images setting is on, and stay 
   assert.equal(on.data.node.attributes.style, `background:url("${avatar}")`);
 });
 
+test('masked platform snapshots retain bounded PNGs without enabling ordinary app images', () => {
+  const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==';
+  assert.equal(cleanUrl(png), '');
+  assert.equal(cleanUrl(png, { images: false, imageSnapshots: true }), png);
+  assert.equal(cleanUrl('data:image/png;base64,iVBORw0KGgo' + 'A'.repeat(256 * 1024), { imageSnapshots: true }), '');
+  for (const other of ['data:image/svg+xml;base64,PHN2Zy8+', 'data:text/html;base64,aGVsbG8=', 'data:image/png;base64,not-a-png']) {
+    assert.equal(cleanUrl(other, { imageSnapshots: true }), '');
+  }
+  const event = JSON.parse(serializeEvent({ type: 2, timestamp: 1, data: { node: {
+    type: 2, tagName: 'img', attributes: { src: png, title: 'private', 'data-user': 'private' }, childNodes: [],
+  } } }, [], { imageSnapshots: true }));
+  assert.deepEqual(event.data.node.attributes, { src: png });
+});
+
 test('opted-in finite data attributes survive snapshots and attribute changes', () => {
   const options = { preserveDataAttributes: { 'data-screen': ['language', 'lobby', 'game', 'chapterIntro'], 'data-locale': ['en', 'id'] } };
   const snapshot = JSON.parse(serializeEvent({ type: 2, timestamp: 1, data: { node: {

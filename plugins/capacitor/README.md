@@ -6,7 +6,8 @@
 client for Capacitor apps, with a native layer on Android and iOS
 
 Recording runs in the WebView through the `pocketbase-replay` client, while the
-native layer reports when the app leaves the screen and comes back
+native layer reports when the app leaves the screen and comes back. Android
+and iOS can also record masked WebView screenshots; this is off by default
 
 JavaScript errors and structured application logs also run in the WebView,
 with the same native pause and resume handling
@@ -118,6 +119,76 @@ Pause and resume happen at the same moments as `@capacitor/app`'s
 
 Until `npx cap sync` has added the native layer, the client falls back to its
 own detection
+
+## Screenshot replay
+
+Enable screenshots explicitly on Android or iOS after syncing the plugin:
+
+```ts
+await PocketBaseReplay.start({
+  endpoint: 'https://replay.example.com',
+  metadata: () => ({ deviceId: 'device-123', platform: Capacitor.getPlatform(), appVersion: '1.0.0' }),
+  // The web build keeps DOM replay; screenshot mode rejects outside Android and iOS.
+  screenshotMode: Capacitor.isNativePlatform(),
+  screenshotOptions: {
+    intervalMs: 1000,
+    maxDimension: 1280,
+    maskAllImages: true,
+  },
+});
+```
+
+Omit `screenshotMode`, or set it to `false`, to use DOM replay without native
+screenshot calls. Calling `start` again switches modes. Screenshot mode
+requires the synced Android or iOS native plugin; it rejects on web or when
+the native layer is missing
+
+Build or update the plugin and `pocketbase-replay` client together. Screenshot
+mode rejects an older client that lacks image replay support
+
+| Option | Default | Behavior |
+| --- | --- | --- |
+| `screenshotMode` | `false` | Record masked native WebView images instead of the DOM |
+| `screenshotOptions.intervalMs` | `1000` | Delay between periodic captures, clamped to 500–60000 ms; requested full snapshots may happen sooner |
+| `screenshotOptions.maxDimension` | `1280` | Longest PNG edge, clamped to 256–1280 pixels; large images may be reduced further |
+| `screenshotOptions.maskAllImages` | `true` | Mask images and CSS background images; allowing them also requires the server's **Record images** setting |
+
+Native code paints over inputs, editable areas, `data-replay-mask` areas,
+mask and block selectors, and text matching `sensitiveText` before an image
+crosses the bridge. Canvas, embedded pages, video and other media are blocked.
+Uninspectable or changing layouts can skip frames; complex painting effects
+can mask the entire viewport. Review a recording against your actual UI and
+mark other private content explicitly. See [privacy and limits](../../docs/privacy-and-limits.md#capacitor-screenshot-mode)
+
+No frame is taken while a CSS transition or animation runs in the page, so a
+looping spinner or shimmer placeholder pauses capture until it is removed.
+Pages with more than 10,000 displayed elements and text nodes are not
+captured. On iOS the page's viewport must fill the WebView, as with
+Capacitor's default `ios.contentInset` of `never`; with content insets no
+frames are taken
+
+On Android and iOS the plugin watches for shadow roots from the moment the app
+loads it, so screenshot mode can inspect closed shadow roots like open ones;
+the watch only notes them. Import the plugin before your app renders, for
+example in `main.ts`. A custom element that was already set up when the plugin
+loaded may hold a closed root nothing can see, so it masks the whole viewport.
+Angular component hosts and Ionic components rendered after the import are
+inspected like any other element
+
+The capture covers the visible WebView. Native views, system sheets and the
+system keyboard outside it are not included. Images use the same replay events
+as Flutter, so the existing server and player need no changes. Activity,
+PocketBase calls, errors, logs, triggers and native pause/resume continue to work
+
+Unchanged images are skipped and frames upload as they are taken. Each PNG is
+at most 192 KiB, but a screen that changes every second can send several MiB
+a minute, far more than DOM replay. Check the per-IP upload allowance (64 MiB
+of gzip data an hour by default, under **Rate limits** in **Security**) and the
+daily storage budget. Consider
+[trigger mode](../../docs/configuration.md#record-only-when-something-breaks)
+and a longer interval. In trigger mode the device keeps up to 6 MiB of frames:
+a minute or more of a screen that changes now and then, less when large frames
+change every second. The server's session limits apply
 
 ## API
 
@@ -252,7 +323,8 @@ console capture. It does not collect native process crashes or device system log
 
 | Type | Definition |
 | --- | --- |
-| `StartOptions` | `ReplayOptions` plus `errors`, `logs`, `service` and `beforeSend` |
+| `StartOptions` | `ReplayOptions` plus `errors`, `logs`, `service`, `beforeSend`, `screenshotMode` and `screenshotOptions` |
+| `ScreenshotOptions` | `{ intervalMs?, maxDimension?, maskAllImages? }` |
 | `GetMetricsResult` | `{ metrics: ReplayMetrics \| null }` |
 | `TriggerOptions` | `{ reason? }`, a label of up to 64 characters |
 | `TriggerResult` | `{ sessionId: string \| null }` |
@@ -291,6 +363,7 @@ Run the native lifecycle tests on an installed iOS simulator:
 npm run test:ios -- -destination 'platform=iOS Simulator,name=iPhone 17'
 ```
 
-The four XCTest cases send UIKit notifications through Capacitor listeners and
+The native XCTest cases send UIKit notifications through Capacitor listeners and
 check pause, resume, listener removal and plugin release. They also check that
-background and foreground notifications do not send duplicate active events.
+background and foreground notifications do not send duplicate active events,
+validate screenshot plans, and check PNG masking, scaling and size limits.

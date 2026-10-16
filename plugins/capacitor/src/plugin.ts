@@ -3,6 +3,7 @@ import type { ObservabilityController, ObservabilityOptions, ReplayController, R
 
 import type { PocketBaseReplayPlugin } from './definitions.js';
 import type { NativeReplayPlugin } from './native.js';
+import { createScreenshotRecorder } from './screenshot.js';
 
 type SubscribeActive = NonNullable<ReplayOptions['subscribeActive']>;
 
@@ -11,6 +12,7 @@ export interface PluginRuntime {
   nativeAvailable: () => boolean;
   native: NativeReplayPlugin;
   loadClient: () => Promise<{
+    supportsImageSnapshots?: boolean;
     startReplay: (options: ReplayOptions) => ReplayController;
     startObservability: (options: ObservabilityOptions) => ObservabilityController;
   }>;
@@ -47,6 +49,7 @@ export function createPlugin(runtime: PluginRuntime): PocketBaseReplayPlugin {
   // Every start and stop takes a new number, so a start still loading the client knows it was overtaken.
   let generation = 0;
   let observabilityGeneration = 0;
+  let triggerOnError = true;
 
   function halt(): void {
     const running = controller;
@@ -63,7 +66,7 @@ export function createPlugin(runtime: PluginRuntime): PocketBaseReplayPlugin {
     return { ...options, subscribeActive: options.subscribeActive ?? subscribeActive(),
       replay: options.replay ?? {
         getSessionContext: () => controller?.getSessionContext() ?? null,
-        trigger: (reason) => controller ? controller.trigger(reason) : Promise.resolve(null),
+        trigger: (reason) => controller && triggerOnError ? controller.trigger(reason) : Promise.resolve(null),
       } };
   }
 
@@ -76,17 +79,28 @@ export function createPlugin(runtime: PluginRuntime): PocketBaseReplayPlugin {
 
   return {
     async start(options) {
+      const { screenshotMode, screenshotOptions, ...clientOptions } = options;
+      if (screenshotMode === true && (!['android', 'ios'].includes(runtime.platform()) || !runtime.nativeAvailable())) {
+        throw new Error('Screenshot mode requires the synced Android or iOS PocketBase Replay plugin');
+      }
       const run = ++generation;
       // Only options that ask for errors or logs replace the running capture; a replay-only start leaves it running.
       const capture = !!(options.errors || options.logs);
       const captureRun = capture ? ++observabilityGeneration : 0;
+      const { startReplay, startObservability, supportsImageSnapshots } = await runtime.loadClient();
+      if (run !== generation) return;
+      if (screenshotMode === true && supportsImageSnapshots !== true) {
+        throw new Error('Screenshot mode requires a pocketbase-replay client with image snapshot support; update the client and plugin together');
+      }
       halt();
-      if (capture) haltObservability();
-      const { startReplay, startObservability } = await runtime.loadClient();
+      if (capture && captureRun === observabilityGeneration) haltObservability();
+      if (run === generation) triggerOnError = options.triggerOnError !== false;
       // Both controllers ask the server for their settings themselves, and capture queues until the answer.
       if (capture && captureRun === observabilityGeneration) observability = startObservability(observabilityOptions(options));
       if (run !== generation) return;
-      controller = startReplay({ ...options, subscribeActive: options.subscribeActive ?? subscribeActive() });
+      controller = startReplay({ ...clientOptions,
+        ...(screenshotMode === true ? { recorder: createScreenshotRecorder(runtime.native, screenshotOptions) } : {}),
+        subscribeActive: options.subscribeActive ?? subscribeActive() });
     },
     async stop() {
       generation++; observabilityGeneration++;

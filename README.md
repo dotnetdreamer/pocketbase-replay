@@ -133,7 +133,8 @@ also controls issue alerts
 **Capacitor and Flutter are available in this repository.** The
 [`capacitor-pocketbase-replay`](plugins/capacitor/README.md) plugin adds Android
 and iOS app lifecycle handling and native HTTP transport to the core client.
-It records the WebView DOM and captures JavaScript errors and application logs,
+It records the WebView DOM, or optional masked screenshots on Android and iOS,
+and captures JavaScript errors and application logs,
 pausing and resuming when the app's native state changes
 
 The [`pocketbase_replay_flutter`](plugins/flutter/README.md) package records a

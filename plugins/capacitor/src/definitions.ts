@@ -54,7 +54,21 @@ export interface PocketBaseReplayPlugin {
   getObservabilityMetrics(): Promise<GetObservabilityMetricsResult>;
 }
 
-export type StartOptions = ReplayOptions & Pick<ObservabilityOptions, 'errors' | 'logs' | 'service' | 'beforeSend'>;
+export type StartOptions = ReplayOptions & Pick<ObservabilityOptions, 'errors' | 'logs' | 'service' | 'beforeSend'> & {
+  /** Record masked screenshots of the native WebView instead of its DOM. Android/iOS only. Default: false. */
+  screenshotMode?: boolean;
+  /** Screenshot sizing, interval and additional image masking. Used only when screenshotMode is true. */
+  screenshotOptions?: ScreenshotOptions;
+};
+
+export interface ScreenshotOptions {
+  /** Delay between periodic screenshots in milliseconds, clamped to 500–60000. Requested full snapshots may occur sooner. Default: 1000. */
+  intervalMs?: number;
+  /** Longest PNG edge in pixels, clamped to 256–1280; large frames may be reduced further. Default: 1280. */
+  maxDimension?: number;
+  /** Mask images as well as private inputs/text. Server image blocking still applies. Default: true. */
+  maskAllImages?: boolean;
+}
 export interface CaptureExceptionOptions extends ExceptionContext { error: unknown }
 export interface CaptureLogOptions { level: LogLevel; message: string; attributes?: ObservabilityAttributes }
 export interface CaptureResult { id: string | null }

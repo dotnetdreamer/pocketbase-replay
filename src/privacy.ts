@@ -14,11 +14,14 @@ const ASSET_VERSION = /^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/;
 const DATA_IMAGE = /^data:image\/(?:avif|gif|jpeg|png|svg\+xml|webp)[;,]/i;
 // A full snapshot is one event capped at 1 MB, so one large picture must not stop the recording.
 const DATA_IMAGE_CHARS = 128 * 1024;
+const SNAPSHOT_IMAGE_CHARS = 256 * 1024 + 22;
+const SNAPSHOT_IMAGE = /^data:image\/png;base64,iVBORw0KGgo[A-Za-z0-9+/]*={0,2}$/;
 
 export interface ReplayAssetOptions {
   assetBaseUrl?: string;
   assetOrigin?: string;
   images?: boolean;
+  imageSnapshots?: boolean;
   preserveDataAttributes?: Record<string, readonly string[]>;
 }
 
@@ -62,6 +65,9 @@ export function packagedAssetBase(endpoint: string, assetOrigin: string | undefi
 
 export function cleanUrl(value: string, assets: ReplayAssetOptions = {}): string {
   value = value.trim();
+  // Platform snapshots have already had their privacy masks painted into their pixels. They are independent
+  // of permission to retain the app's ordinary images, which the platform recorder masks itself.
+  if (assets.imageSnapshots && value.length <= SNAPSHOT_IMAGE_CHARS && SNAPSHOT_IMAGE.test(value)) return value;
   if (/^#[A-Za-z0-9_:.-]+$/.test(value)) return value;
   // Only when the replay server's record_images setting is on.
   if (assets.images && DATA_IMAGE.test(value) && value.length <= DATA_IMAGE_CHARS) return value;

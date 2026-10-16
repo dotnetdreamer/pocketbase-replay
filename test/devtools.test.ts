@@ -140,6 +140,56 @@ test('network and console capture stay off unless the server turns them on', asy
   });
 });
 
+test('configured private words are removed from decoded navigation and network paths without reading request values', async () => {
+  const window = fakePage('https://app.test/start');
+  const calls: unknown[][] = [];
+  window.fetch = async (...args: unknown[]) => { calls.push(args); return { status: 200 }; };
+  window.XMLHttpRequest = FakeXhr;
+  const events: ReplayEvent[] = [];
+  let words = ['Alice/Smith', 'a+b[1]', 'Zoë'];
+  await withGlobals({ window }, async () => {
+    const stop = startDevtools((event) => events.push(event), options({ recordNetwork: true, sensitiveText: () => words }));
+    window.history.pushState({}, '', '/customers/%61LICE/%53mith?token=private#private');
+    window.history.pushState({}, '', '/names/Z%6f%C3%AB');
+    window.history.pushState({}, '', '/names/ALICE%2Fsmith%3Fstatus%23details');
+    assert.deepEqual(payloads(events, 'pbr/navigation').map(({ url }) => url), [
+      'https://app.test/customers/*', 'https://app.test/names/*', 'https://app.test/names/*%3Fstatus%23details',
+    ]);
+    const target = 'https://user:pass@api.test/items/%61%2Bb%5B1%5D?token=private#private';
+    const init = { method: 'POST', get headers(): never { throw new Error('headers read'); }, get body(): never { throw new Error('body read'); } };
+    await window.fetch(target, init);
+    assert.equal(calls[0][0], target);
+    assert.equal(calls[0][1], init);
+    const xhr = new FakeXhr();
+    xhr.open('GET', '/customers/%61lice/%73mith'); xhr.send(); xhr.finish(200, 'load');
+    words = ['NextPrivate'];
+    await window.fetch('/next/%6eEXTprivate');
+    await window.fetch('/malformed/%E0%A4%A/NextPrivate');
+    const longPrefix = 'https://api.test/' + 'x'.repeat(DEVTOOLS_LIMITS.urlChars - 'https://api.test/'.length - 2) + '/';
+    await window.fetch(longPrefix + 'NextPrivate');
+    assert.deepEqual(payloads(events, 'pbr/network').map(({ url }) => url), [
+      'https://api.test/items/*', 'https://app.test/customers/*', 'https://app.test/next/*', 'https://app.test/*', longPrefix + '*',
+    ]);
+    assert.doesNotMatch(JSON.stringify(events), /alice|smith|zoë|a\+b\[1\]|nextprivate|private#|user:pass|%E0%A4/i);
+    stop();
+  });
+});
+
+test('sensitive URL path redaction cannot turn replay uploads into captured network requests', async () => {
+  const window = fakePage('https://app.test/');
+  window.fetch = async () => ({ status: 200 });
+  window.XMLHttpRequest = FakeXhr;
+  const events: ReplayEvent[] = [];
+  await withGlobals({ window }, async () => {
+    const stop = startDevtools((event) => events.push(event), options({ recordNetwork: true, sensitiveText: () => ['api', 'replay'] }));
+    await window.fetch('https://pb.test/api/replay/chunks');
+    const own = new FakeXhr(); own.open('POST', 'https://pb.test/api/replay/errors'); own.send(); own.finish(200, 'load');
+    await window.fetch('https://api.test/api/items');
+    assert.deepEqual(payloads(events, 'pbr/network').map(({ url }) => url), ['https://api.test/*/items']);
+    stop();
+  });
+});
+
 test('records fetch requests with status, whole-millisecond duration and finish time, and returns the original result', async () => {
   const window = fakePage('https://app.test/home');
   const calls: { self: unknown; args: unknown[] }[] = [];

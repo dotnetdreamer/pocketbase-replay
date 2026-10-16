@@ -30,6 +30,20 @@ export const REPLAY_LIMITS = {
   markMs: 5000,
 };
 
+// Image snapshots from a platform recorder are pre-masked frames of up to 256 KiB that barely compress, so they use
+// the Flutter engine's frame-sized bounds and each part uploads once sealed. The DOM bounds would hold frames until
+// the next flush, split them into one chunk each and overflow the queue, which drops them all.
+export const IMAGE_REPLAY_LIMITS = {
+  ...REPLAY_LIMITS,
+  bufferBytes: 256 * 1024,
+  rawQueueBytes: 8 * 1024 * 1024,
+  queueBytes: 4 * 1024 * 1024,
+  queueChunks: 40,
+  targetBodyBytes: 400 * 1024,
+  keptBytes: 6 * 1024 * 1024,
+  keptChunks: 40,
+};
+
 interface Entry { json: string; bytes: number; timestamp: number; snapshot: boolean; meta: boolean }
 interface Batch { entries: Entry[]; room: string; epoch: number; bytes: number; taken?: boolean }
 interface Prepared { body: string; bytes: number; epoch: number }
@@ -86,6 +100,7 @@ export function createReplay(options: ReplayOptions, runtime: ReplayRuntime): Re
   let seq = 0;
   let interval = 25000;
   let adapter: RecorderAdapter | null = null;
+  let limits = REPLAY_LIMITS;
   let captureStop: (() => void) | undefined;
   let captureStarting = false;
   let awaitingSnapshot = true;
@@ -129,6 +144,7 @@ export function createReplay(options: ReplayOptions, runtime: ReplayRuntime): Re
   let liveUntil = 0;
   let kept: Batch[] = [];
   let keptBytes = 0;
+  let partRequested = false;
   // A promoted backlog may briefly exceed the usual queue bounds while it uploads.
   let burst = { bytes: 0, chunks: 0 };
   let triggered = '';
@@ -178,7 +194,7 @@ export function createReplay(options: ReplayOptions, runtime: ReplayRuntime): Re
       }
     } catch { return null; }
     return {
-      ...options, maskTextSelector, blockSelector, recordNetwork: serverNetwork, recordConsole: serverConsole,
+      ...options, maskTextSelector, blockSelector, recordImages: serverImages, recordNetwork: serverNetwork, recordConsole: serverConsole,
       recordPocketbase: serverPocketbase, tracePocketbaseRequests: serverTracePocketbase, replaySession: () => context()?.sessionId ?? null,
     };
   }
@@ -198,7 +214,7 @@ export function createReplay(options: ReplayOptions, runtime: ReplayRuntime): Re
     buffer = []; bufferBytes = 0;
     pending = []; pendingBytes = 0;
     queue = []; queueBytes = 0;
-    kept = []; keptBytes = 0;
+    kept = []; keptBytes = 0; partRequested = false;
     burst = { bytes: 0, chunks: 0 };
     awaitingSnapshot = true;
     epoch++;
@@ -274,12 +290,24 @@ export function createReplay(options: ReplayOptions, runtime: ReplayRuntime): Re
       if (kept[index].entries[0].timestamp <= cutoff) break;
     }
     dropKept(from < 0 ? kept.length : from);
-    while (keptBytes > REPLAY_LIMITS.keptBytes || kept.length > REPLAY_LIMITS.keptChunks) {
+    while (keptBytes > limits.keptBytes || kept.length > limits.keptChunks) {
       const next = kept.findIndex((item, index) => index > 0 && opensSnapshot(item));
       // The newest part alone is too large to keep: start again from a fresh snapshot.
       if (next < 0) { recover(); return; }
       dropKept(next);
     }
+    if (opensSnapshot(batch)) partRequested = false;
+    // Image frames can fill the allowance well within a checkout, and one image costs no more as a full snapshot,
+    // so a part opens at half of it: reaching the allowance then drops the older part instead of everything kept.
+    if (limits !== IMAGE_REPLAY_LIMITS || partRequested) return;
+    let bytes = 0, chunks = 0;
+    for (let index = kept.length - 1; index >= 0; index--) {
+      bytes += kept[index].bytes; chunks++;
+      if (opensSnapshot(kept[index])) break;
+    }
+    if (bytes <= limits.keptBytes / 2 && chunks <= limits.keptChunks / 2) return;
+    partRequested = true;
+    runtime.schedule(() => { if (!closed && active && captureStop && !localBlocked && keeping()) snapshotNow(); }, 0);
   }
 
   function dropKept(count: number): void {
@@ -294,7 +322,8 @@ export function createReplay(options: ReplayOptions, runtime: ReplayRuntime): Re
     if (keeping()) { keep(batch); return; }
     pending.push(batch);
     pendingBytes += batch.bytes;
-    if (pendingBytes > REPLAY_LIMITS.rawQueueBytes + burst.bytes || pending.length > REPLAY_LIMITS.queueChunks + burst.chunks) recover();
+    if (pendingBytes > limits.rawQueueBytes + burst.bytes || pending.length > limits.queueChunks + burst.chunks) recover();
+    else if (limits === IMAGE_REPLAY_LIMITS) void pump();
   }
 
   function scheduleCheckout(): void {
@@ -366,6 +395,7 @@ export function createReplay(options: ReplayOptions, runtime: ReplayRuntime): Re
         : packagedAssetBase(endpoint, assetOrigin, value.appVersion),
       assetOrigin,
       images: serverImages,
+      imageSnapshots: adapter?.imageSnapshots === true,
       preserveDataAttributes: options.preserveDataAttributes,
     });
     const bytes = byteLength(json) + 1;
@@ -373,14 +403,14 @@ export function createReplay(options: ReplayOptions, runtime: ReplayRuntime): Re
     // A large full snapshot stays with the meta event just before it: the player needs that meta to place it,
     // and a kept part made of the meta alone would be dropped for not opening with a snapshot.
     const followsMeta = event.type === 2 && buffer.length === 1 && buffer[0].meta;
-    if (bufferBytes && bufferBytes + bytes > REPLAY_LIMITS.bufferBytes && !followsMeta) seal();
+    if (bufferBytes && bufferBytes + bytes > limits.bufferBytes && !followsMeta) seal();
     if (awaitingSnapshot && event.type !== 2 && event.type !== 4) return;
     buffer.push({ json, bytes, timestamp: event.timestamp, snapshot: event.type === 2, meta: event.type === 4 });
     bufferBytes += bytes;
     metrics.events++;
     metrics.rawBytes += bytes;
     if (event.type === 2) awaitingSnapshot = false;
-    if (bufferBytes >= REPLAY_LIMITS.bufferBytes) { seal(); if (!keeping()) void pump(); }
+    if (bufferBytes >= limits.bufferBytes) { seal(); if (!keeping()) void pump(); }
   }
 
   function receive(event: ReplayEvent): void {
@@ -403,6 +433,7 @@ export function createReplay(options: ReplayOptions, runtime: ReplayRuntime): Re
     const expected = epoch;
     try {
       adapter = adapter ?? await runtime.loadRecorder();
+      limits = adapter.imageSnapshots === true ? IMAGE_REPLAY_LIMITS : REPLAY_LIMITS;
       if (expected !== epoch || closed || !active || (!session && !keeping())) return;
       const settings = captureOptions();
       if (!settings) { metrics.errors++; return; }
@@ -451,7 +482,7 @@ export function createReplay(options: ReplayOptions, runtime: ReplayRuntime): Re
     const body = JSON.stringify(makeChunk(batch, compressed, seq));
     const bytes = byteLength(body);
     metrics.mainThreadMs += runtime.performanceNow() - started;
-    if (bytes > REPLAY_LIMITS.targetBodyBytes && batch.entries.length > 1 && !batch.entries.some((entry) => entry.snapshot)) {
+    if (bytes > limits.targetBodyBytes && batch.entries.length > 1 && !batch.entries.some((entry) => entry.snapshot)) {
       const middle = Math.floor(batch.entries.length / 2);
       pending.unshift(...[batch.entries.slice(0, middle), batch.entries.slice(middle)].map((entries) => (
         { entries, room: batch.room, epoch: batch.epoch, bytes: entries.reduce((sum, entry) => sum + entry.bytes, 0) })));
@@ -463,7 +494,7 @@ export function createReplay(options: ReplayOptions, runtime: ReplayRuntime): Re
     queue.push({ body, bytes, epoch });
     queueBytes += bytes;
     metrics.compressedBytes += compressed.byteLength;
-    if (queueBytes > REPLAY_LIMITS.queueBytes + burst.bytes || queue.length > REPLAY_LIMITS.queueChunks + burst.chunks) recover();
+    if (queueBytes > limits.queueBytes + burst.bytes || queue.length > limits.queueChunks + burst.chunks) recover();
   }
 
   function pump(): Promise<void> {

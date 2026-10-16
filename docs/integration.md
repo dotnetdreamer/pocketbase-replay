@@ -207,6 +207,11 @@ See the [Capacitor example](../examples/capacitor.ts)
 The [Capacitor plugin](../plugins/capacitor/README.md) reports pause and resume
 from its own native code, so it does not need `@capacitor/app`
 
+Its `start` also accepts `screenshotMode: true` to record masked native WebView
+images on Android and iOS. This is off by default. Configure capture interval,
+image dimensions and image masking with `screenshotOptions`; see
+[Capacitor screenshot replay](../plugins/capacitor/README.md#screenshot-replay)
+
 ## Custom transport
 
 A custom `post(url, body)` must return the parsed JSON response and throw

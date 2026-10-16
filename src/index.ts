@@ -7,12 +7,15 @@ import { subscribeCapture } from './observability-capture';
 import type { ObservabilityController, ObservabilityOptions, ObservabilityStorage } from './observability-types.js';
 import type { ReplayController, ReplayOptions, ReplayTransport } from './types.js';
 
-export type { PocketBaseClient, ReplayController, ReplayOptions, ReplayMetadata, ReplayMetrics, ReplayTransport, ReplaySessionContext } from './types.js';
+export type { PocketBaseClient, RecorderAdapter, RecorderOptions, ReplayController, ReplayEvent, ReplayOptions, ReplayMetadata, ReplayMetrics, ReplayTransport, ReplaySessionContext } from './types.js';
 export type {
   CapturedException, CapturedLog, ErrorTrackingOptions, ExceptionContext, LogCaptureOptions, LogLevel,
   ObservabilityAttributes, ObservabilityController, ObservabilityEvent, ObservabilityMetrics, ObservabilityOptions,
 } from './observability-types.js';
 export { ReplayHttpError };
+
+// Platform plugins check this before enabling image replay with an independently installed client.
+export const supportsImageSnapshots = true;
 
 export function fetchTransport(): ReplayTransport {
   return {
@@ -83,7 +86,24 @@ export function startReplay(options: ReplayOptions): ReplayController {
     performanceNow: () => typeof performance === 'undefined' ? Date.now() : performance.now(),
     schedule: (callback, ms) => setTimeout(callback, ms),
     cancel: (timer) => clearTimeout(timer as ReturnType<typeof setTimeout>),
-    loadRecorder: async () => (await import('./recorder')).recorder,
+    loadRecorder: async () => {
+      const custom = options.recorder;
+      if (!custom) return (await import('./recorder')).recorder;
+      const { startDevtools } = await import('./devtools');
+      return {
+        imageSnapshots: custom.imageSnapshots,
+        start: (emit, settings) => {
+          const stop = custom.start(emit, settings);
+          if (!stop) return undefined;
+          let stopActivity: (() => void) | undefined;
+          try { stopActivity = startDevtools(emit, settings); } catch { /* Activity remains optional. */ }
+          return () => {
+            try { stopActivity?.(); } finally { stop(); }
+          };
+        },
+        snapshot: () => custom.snapshot(),
+      };
+    },
     compress: (raw) => new Promise((resolve, reject) => {
       let done = false;
       let cancel: (() => void) | undefined;

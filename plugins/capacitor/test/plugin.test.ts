@@ -42,13 +42,14 @@ function fakeClient() {
       getMetrics: () => ({ errorsEnabled: true, logsEnabled: true }) as ObservabilityMetrics,
     };
   };
-  return { started, recorders, observabilityStarted, captures, client: { startReplay, startObservability } };
+  return { started, recorders, observabilityStarted, captures, client: { startReplay, startObservability, supportsImageSnapshots: true } };
 }
 
 function fakeNative() {
   const listeners: ((state: AppState) => void)[] = [];
   const state = { removed: 0, held: false, release: () => {} };
   const native: NativeReplayPlugin = {
+    captureScreenshot: async () => { throw new Error('Screenshots must not be requested by lifecycle handling'); },
     addListener(event, listener) {
       assert.equal(event, 'appStateChange');
       listeners.push(listener);
@@ -91,6 +92,59 @@ test('on the web, start passes the options through and leaves pause and resume t
   assert.equal(started[0].metadata, options.metadata);
   assert.equal(started[0].subscribeActive, undefined);
   assert.equal(listeners.length, 0);
+});
+
+test('screenshot replay is opt-in, supplies a native image recorder, and leaves ordinary recording unchanged', async () => {
+  for (const platform of ['ios', 'android']) {
+    const { started, client } = fakeClient();
+    let captured = 0;
+    const native = { ...fakeNative().native, captureScreenshot: async () => { captured++; throw new Error('No live capture'); } };
+    const replay = plugin(platform, client, native);
+    await replay.start({ ...options, screenshotOptions: { intervalMs: 500 } });
+    assert.equal(started[0].recorder, undefined);
+    assert.equal(captured, 0);
+    await replay.start({ ...options, screenshotMode: true, screenshotOptions: { maxDimension: 640 } });
+    assert.equal(started[1].recorder?.imageSnapshots, true);
+    assert.equal(typeof started[1].recorder?.snapshot, 'function');
+    assert.equal(captured, 0, 'only the enabled engine can start native capture');
+    assert.equal('screenshotMode' in started[1], false);
+    await replay.start({ ...options, screenshotMode: false });
+    assert.equal(started[2].recorder, undefined);
+    await replay.stop();
+  }
+});
+
+test('screenshot mode requires a synced native plugin and rejects before replacing a running recorder', async () => {
+  for (const [platform, available] of [['web', true], ['ios', false], ['android', false]] as const) {
+    const { client, recorders } = fakeClient();
+    const replay = plugin(platform, client, fakeNative().native, available);
+    await replay.start(options);
+    await assert.rejects(replay.start({ ...options, screenshotMode: true }), /requires the synced Android or iOS/);
+    assert.equal(recorders[0].stopped, 0);
+    await replay.stop();
+  }
+});
+
+test('triggerOnError false applies to the plugin diagnostics link while explicit triggers work', async () => {
+  const { client, recorders, observabilityStarted } = fakeClient();
+  const replay = plugin('ios', client);
+  await replay.start({ ...options, errors: true, triggerOnError: false });
+  assert.equal(await observabilityStarted[0].replay!.trigger('error'), null);
+  assert.deepEqual(recorders[0].triggers, []);
+  await replay.trigger({ reason: 'report' });
+  assert.deepEqual(recorders[0].triggers, ['report']);
+  await replay.stop();
+});
+
+test('older clients cannot silently fall back to DOM replay when screenshots are requested', async () => {
+  const { client, recorders, captures } = fakeClient();
+  const replay = plugin('ios', { ...client, supportsImageSnapshots: undefined });
+  await replay.start({ ...options, errors: true });
+  await assert.rejects(replay.start({ ...options, errors: true, screenshotMode: true }), /update the client and plugin together/);
+  assert.equal(recorders.length, 1);
+  assert.equal(recorders[0].stopped, 0);
+  assert.equal(captures[0].stopped, 0);
+  await replay.stop();
 });
 
 test('on Android and iOS, pause and resume come from the native plugin', async () => {

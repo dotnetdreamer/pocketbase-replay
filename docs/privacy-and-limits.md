@@ -10,7 +10,7 @@ It is not a pixel video archive, and canvas areas remain blank
 
 - All input values and contenteditable text are masked
 - Canvas, iframes, video and audio are blocked. Nothing inside a blocked element is uploaded, including the page in a same-origin iframe and content added to a blocked element's shadow root
-- No screenshots, WebGL capture, microphone or network payloads are recorded
+- The DOM recorder takes no screenshots. WebGL capture, microphone and network payloads are not recorded
 - With **Record network requests** on in Recording settings, each `fetch` and `XMLHttpRequest` adds only its method, address without its query, status and timing, at most 100 a minute. Headers and bodies are never read, and requests to the replay API itself are skipped
 - With **Record console messages** on, the recording also carries console output and uncaught errors, at most 100 a minute and 1,000 characters each. Text is redacted as for [diagnostics](observability.md#privacy-and-limits) and by `sensitiveText`, and errors show only their name and message. It is off by default because console output can contain private content. The separate [logs feature](observability.md) stores selected console levels on its own
 - Page changes made through the browser history are noted by address without query or fragment, at most 50 a minute
@@ -18,9 +18,62 @@ It is not a pixel video archive, and canvas areas remain blank
 - Text rendered outside an input needs a mask or block rule, set in the dashboard or passed to `startReplay`, or a `sensitiveText` list
 - A rule the app cannot parse stops recording instead of leaving text unmasked
 - Sensitive attributes and every `data-*` attribute outside a short safe list are removed by default, which can make some layouts replay slightly off. Apps can opt in fixed, finite UI states with [`preserveDataAttributes`](integration.md#optional-settings)
-- URL query strings and navigation fragments are stripped. In Flutter route and network URLs, `sensitiveText` also redacts matching path text, including its percent-encoded form. Other private path segments still need app-specific handling; DOM masking does not sanitize diagnostic or network URLs
+- URL query strings and navigation fragments are stripped. In activity route and network URLs, `sensitiveText` also redacts matching path text, including its percent-encoded form. Other private path segments still need app-specific handling; DOM masking does not sanitize diagnostic or network URLs
 
 Review [privacy rules](configuration.md#privacy-rules) against your actual UI and watch a new recording after changing the UI or its rules
+
+### Capacitor screenshot mode
+
+The [Capacitor plugin](../plugins/capacitor/README.md#screenshot-replay) can record
+masked screenshots of the native Android or iOS WebView. It is off by default;
+the DOM recorder remains the default. Native views, system sheets and the
+keyboard outside the WebView are excluded
+
+Inputs and editable areas, `data-replay-mask` areas, configured mask and block
+selectors, and visible text matching `sensitiveText` are painted over in native
+code before images cross the bridge. Canvas, embedded pages and media are
+blocked. Images and CSS background images are masked by default; allowing them
+requires both `maskAllImages: false` and the dashboard's **Record images** switch
+
+Privacy inspection must succeed before and after each capture. Unstable or
+zoomed layouts skip frames, and no frame is taken while a CSS transition or
+animation runs in the page or when it has more than 10,000 displayed elements
+and text nodes. Painting effects that cannot be safely bounded can mask the
+whole viewport. Explicitly mask other private content, and review recordings
+after changing your UI. Private controls use a generic activity label and
+positions at the centre of their mask
+
+On iOS the snapshot covers the whole WebView, so a frame is taken only when the
+page's viewport fills it, as with Capacitor's default `ios.contentInset` of
+`never`. Content insets would move every mask, so no frames are taken with them
+
+A closed shadow root cannot be found from outside its host, so on Android and
+iOS the plugin watches `attachShadow` from the moment the app loads it, and
+screenshot mode inspects each closed root it saw attached like an open one. The
+watch only notes roots; pages behave as before. Import the plugin before the
+app renders. A custom element already set up when the plugin loaded may hold a
+closed root that nothing can see, so it masks the whole viewport. Angular
+component hosts and Ionic components rendered after the import are inspected
+like other elements
+
+Some closed roots stay invisible: one attached before the plugin loaded to an
+element that is not a custom element, one declared in the HTML with
+`shadowrootmode="closed"`, and one attached by a library that kept its own
+reference to `attachShadow` from before the plugin loaded. Mark such a host
+with `data-replay-mask` and clip its content to that host (for example with
+`overflow: hidden` or `contain: paint`), or leave screenshot mode off on that
+screen. Private pixels inside an unmarked root of this kind are not
+automatically recognised
+
+PNG images are at most 1280 pixels on the longer side and 192 KiB each.
+Captures default to a one-second interval, unchanged images are skipped, and
+native pause/resume and the server's recording settings still apply. Frames
+upload as they are taken, with client buffers sized for images as in Flutter
+replay. In trigger mode the device keeps up to 6 MiB of frames: a minute or
+more of a screen that changes now and then, less when large frames change every
+second. The server's session limits and [per-IP upload allowance](#upload-volume)
+still apply, and a screen that changes every second can send several MiB a
+minute. Longer intervals and trigger mode help limit storage
 
 ### Flutter apps
 

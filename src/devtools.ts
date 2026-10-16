@@ -80,20 +80,41 @@ export function startDevtools(emit: (event: ReplayEvent) => void, options: Recor
   let busy = false;
 
   function privateText(): string[] {
+    const previous = busy;
+    busy = true;
     try { const values = options.sensitiveText?.(); return Array.isArray(values) ? values : []; } catch { return []; }
+    finally { busy = previous; }
   }
 
-  function pageUrl(value: unknown): string {
+  function privatePath(value: string): string {
+    // Decode only after the original query/fragment has gone. A configured name may span path separators,
+    // and percent-encoding individual letters must not bypass its literal, case-insensitive match.
+    const prefix = /^(?:[a-z][a-z0-9+.-]*:\/\/[^/]*|[a-z][a-z0-9+.-]*:)/i.exec(value)?.[0] ?? '';
+    const path = value.slice(prefix.length);
+    let decoded: string;
+    try { decoded = decodeURIComponent(path); } catch { return `${prefix}/*`; }
+    let redacted = decoded;
+    for (const word of privateText().filter((word) => typeof word === 'string' && word.length).sort((left, right) => right.length - left.length)) {
+      redacted = redacted.replace(new RegExp(word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'), '*');
+    }
+    // Re-encode decoded question marks/fragments as path text instead of creating new URL components.
+    return redacted === decoded ? value : prefix + redacted.split('/').map(encodeURIComponent).join('/');
+  }
+
+  function pageUrl(value: unknown, maskPath = true): string {
     let url = String(value).trim().slice(0, 8192);
     try { if (page.location?.href) url = new URL(url, page.location.href).href; } catch { /* Kept as given. */ }
     // Data and blob URLs carry their content, so only the scheme is kept.
-    return (cleanUrl(url) || (/^[a-z][a-z0-9+.-]*:/i.exec(url)?.[0] ?? '')).slice(0, DEVTOOLS_LIMITS.urlChars);
+    const cleaned = cleanUrl(url);
+    if (!cleaned) return /^[a-z][a-z0-9+.-]*:/i.exec(url)?.[0] ?? '';
+    // Ownership checks use the original cleaned path; recorded paths are shortened only after masking.
+    return maskPath ? privatePath(cleaned).slice(0, DEVTOOLS_LIMITS.urlChars) : cleaned;
   }
 
   const replayApi = (() => {
     try {
       const endpoint = typeof options.endpoint === 'string' ? options.endpoint.trim() : '';
-      return endpoint ? `${pageUrl(endpoint).replace(/\/+$/, '')}${REPLAY_API}` : '';
+      return endpoint ? `${pageUrl(endpoint, false).replace(/\/+$/, '')}${REPLAY_API}` : '';
     } catch { return ''; }
   })();
   const ownRequest = (url: string) => !!replayApi && (url === replayApi || url.startsWith(`${replayApi}/`));
@@ -162,9 +183,10 @@ export function startDevtools(emit: (event: ReplayEvent) => void, options: Recor
         if (init && typeof init === 'object' && pocketbaseRequests.has(init)) return result;
         const request: Request = {
           method: methodName(init && typeof init === 'object' && init.method !== undefined ? init.method : fromRequest ? input.method : 'GET'),
-          url: pageUrl(fromRequest ? input.url : input), started, sent: true,
+          url: pageUrl(fromRequest ? input.url : input, false), started, sent: true,
         };
         if (ownRequest(request.url) || !result || typeof (result as Promise<unknown>).then !== 'function') return result;
+        request.url = privatePath(request.url).slice(0, DEVTOOLS_LIMITS.urlChars);
         // A promise chained to the original settles with its exact response or error, and an unhandled
         // rejection is still reported as one.
         return (result as Promise<unknown>).then((response) => {
@@ -209,9 +231,9 @@ export function startDevtools(emit: (event: ReplayEvent) => void, options: Recor
       const result = original.apply(this, args);
       if (active && this && typeof this === 'object') {
         try {
-          const url = pageUrl(args[1]);
+          const url = pageUrl(args[1], false);
           if (ownRequest(url)) requests.delete(this);
-          else requests.set(this, { method: methodName(args[0]), url, started: 0, sent: false });
+          else requests.set(this, { method: methodName(args[0]), url: privatePath(url).slice(0, DEVTOOLS_LIMITS.urlChars), started: 0, sent: false });
         } catch { requests.delete(this); }
       }
       return result;

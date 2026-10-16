@@ -8,7 +8,8 @@ own package
 ## Available plugins
 
 The [Capacitor plugin](capacitor/README.md), `capacitor-pocketbase-replay`, is
-implemented for Android, iOS and web. It records the WebView's DOM, captures
+implemented for Android, iOS and web. It records the WebView's DOM, with optional
+masked screenshot replay on Android and iOS (off by default), captures
 JavaScript errors and structured application logs, and adds native pause and
 resume handling on Android and iOS. Requests use `CapacitorHttp` on native
 platforms
