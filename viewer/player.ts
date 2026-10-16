@@ -12,6 +12,7 @@ interface Hoverable {
 }
 interface Root { nodeType: number; querySelectorAll?: (selector: string) => Iterable<{ classList: { remove: (name: string) => void } }> }
 interface Internals {
+  pause?: (timeOffset?: number) => void;
   timer?: Timer;
   emitter?: { all?: Map<string, ((value: unknown) => void)[]> };
   iframe?: { contentDocument: Root | null };
@@ -31,6 +32,16 @@ export function keepPlaying(replayer: unknown, report: (error: unknown) => void)
   const guard = <T extends unknown[]>(run: (...args: T) => unknown) => function (this: unknown, ...args: T) {
     try { return run.apply(this, args); } catch (error) { report(error); return undefined; }
   };
+
+  // rrweb's paused seek only applies events strictly before its offset, then cancels the timer for the rest.
+  // At zero, even the first full snapshot is canceled, leaving the screen from the previous position visible.
+  // One millisecond includes the initial integer-timestamp snapshot without applying later millisecond events.
+  const pause = target.pause;
+  if (typeof pause === 'function') {
+    target.pause = function (this: Internals, timeOffset?: number) {
+      return pause.call(this, timeOffset === 0 ? 1 : timeOffset);
+    };
+  }
 
   // Its frame loop runs each due event with no try/catch, so a throw left the rest unplayed.
   const timer = target.timer;

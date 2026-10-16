@@ -9,7 +9,10 @@ const core = require('../pb_hooks/lib/replay-core.js');
 const replay = require('../pb_hooks/lib/replay.js');
 const hash = value => createHash('sha256').update(value).digest('hex');
 const now = Date.now();
-const defaults = { mode: 'off', percentage: 0, account_ids: [], retention_days: 14, daily_limit_mb: 1024, mask_selector: '', block_selector: '', record_images: false };
+const defaults = {
+  mode: 'off', percentage: 0, account_ids: [], retention_days: 14, daily_limit_mb: 1024, mask_selector: '', block_selector: '', record_images: false,
+  record_network: false, record_console: false, upload_mode: 'session', record_pocketbase: true,
+};
 const MB = 1024 * 1024;
 
 function validChunk() {
@@ -82,7 +85,7 @@ test('the daily limit is read with the other settings and falls back to its defa
   const app = { findRecordsByFilter: (name, filter, sort, limit) => { query = { name, filter, limit }; return settingRows(stored); } };
   assert.deepEqual(replay.config(app), { ...defaults, ...stored, daily_limit_mb: 1024 });
   assert.match(query.filter, /key = 'daily_limit_mb'/);
-  assert.equal(query.limit, 8);
+  assert.equal(query.limit, Object.keys(defaults).length);
   stored.daily_limit_mb = 2048;
   assert.equal(replay.config(app).daily_limit_mb, 2048);
   stored.daily_limit_mb = 0;
@@ -170,7 +173,7 @@ test('saving settings keeps stored selectors when a form leaves them out and rep
   assert.equal(edited.mask_selector, '.chat,\n.name');
   assert.equal(rows.get('mask_selector').value, JSON.stringify('.chat,\n.name'));
   assert.equal(rows.get('block_selector').value, '""');
-  assert.deepEqual(replay.getSettings(e({})), { ...form, mask_selector: '.chat,\n.name', block_selector: '', record_images: false });
+  assert.deepEqual(replay.getSettings(e({})), { ...defaults, ...form, mask_selector: '.chat,\n.name', block_selector: '' });
   assert.throws(() => replay.saveSettings(e({ ...form, mask_selector: '.a\u0007' })), { status: 400 });
   assert.equal(rows.get('mask_selector').value, JSON.stringify('.chat,\n.name'));
 
@@ -391,6 +394,7 @@ test('config and start send the privacy rules whenever they answer enabled', () 
   const base = { deviceId: 'device-a', platform: 'web' };
   assert.deepEqual(replay.publicConfig(fixture.request(base)), {
     enabled: true, uploadIntervalMs: core.LIMITS.uploadIntervalMs, maskTextSelector: '.chat,\n[class*="name"]', blockSelector: '.avatar', recordImages: false,
+    recordNetwork: false, recordConsole: false, uploadMode: 'session', recordPocketbase: true, tracePocketbaseRequests: false,
   });
   const started = replay.start(fixture.request(base));
   assert.equal(started.enabled, true);
@@ -898,4 +902,105 @@ test('hook wiring loads handlers inside each isolated route and bounds upload bo
   assert.match(bootstraps[0].toString(), /require\(`\$\{__hooks\}\/lib\/replay\.js`\)/);
   bootstraps[0]({ app: 'app', next: () => calls.push('next') });
   assert.deepEqual(calls, ['next', 'require /pb/pb_hooks/lib/replay.js', 'trustProxy app']);
+});
+
+test('upload mode and network and console capture default off, refuse other values and survive older forms', () => {
+  assert.equal(core.settings({ ...defaults, upload_mode: 'trigger' }).upload_mode, 'trigger');
+  const { record_network: _network, record_console: _console, upload_mode: _mode, ...older } = defaults;
+  assert.deepEqual(core.settings(older), defaults);
+  for (const edit of [{ upload_mode: 'errors' }, { upload_mode: true }, { record_network: 'yes' }, { record_console: 1 }]) {
+    assert.throws(() => core.settings({ ...defaults, ...edit }), { status: 400 });
+  }
+  globals();
+  const rows = new Map(Object.entries({ ...defaults, record_network: true, record_console: true, upload_mode: 'trigger' })
+    .map(([key, value]) => [key, { key, value: JSON.stringify(value) }]));
+  const app = {
+    runInTransaction: fn => fn(app),
+    findRecordsByFilter: () => Array.from(rows.values()).map(row => ({ getString: field => row[field] })),
+    findFirstRecordByData: (_name, _field, key) => { if (!rows.has(key)) throw new Error('missing'); return { set: (field, value) => { rows.get(key)[field] = value; } }; },
+    findCollectionByNameOrId: name => ({ name }),
+    save: () => {},
+  };
+  const e = body => ({ app, hasSuperuserAuth: () => true, request: { body: JSON.stringify(body) } });
+  const saved = replay.saveSettings(e({ mode: 'percentage', percentage: 10, account_ids: [], retention_days: 14, daily_limit_mb: 50 }));
+  assert.equal(saved.record_network, true);
+  assert.equal(saved.record_console, true);
+  assert.equal(saved.upload_mode, 'trigger');
+  rows.set('upload_mode', { key: 'upload_mode', value: '"sometimes"' });
+  const fallback = replay.config(app);
+  assert.equal(fallback.mode, 'off');
+  assert.equal(fallback.upload_mode, 'session');
+  assert.equal(fallback.record_network, true);
+});
+
+test('trigger mode admits only clients that keep recordings on the device, and starts a session only for a reason', () => {
+  const fixture = serverFixture({ ...defaults, mode: 'percentage', percentage: 100, upload_mode: 'trigger', record_network: true, record_console: true });
+  fixture.app.db = () => ({ newQuery: () => ({ bind: () => ({ one: result => { result.total = 0; } }) }) });
+  const base = { deviceId: 'device-a', platform: 'web' };
+  const off = { enabled: false, uploadIntervalMs: core.LIMITS.uploadIntervalMs };
+  assert.deepEqual(replay.publicConfig(fixture.request(base)), off);
+  assert.deepEqual(replay.publicConfig(fixture.request({ ...base, features: 'trigger' })), off);
+  const capable = { ...base, features: ['trigger'] };
+  const answer = replay.publicConfig(fixture.request(capable));
+  assert.equal(answer.enabled, true);
+  assert.equal(answer.uploadMode, 'trigger');
+  assert.equal(answer.recordNetwork, true);
+  assert.equal(answer.recordConsole, true);
+  for (const body of [base, capable, { ...capable, trigger: '   ' }]) assert.deepEqual(replay.start(fixture.request(body)), { enabled: false });
+  assert.equal(fixture.state.saved.length, 0);
+  const started = replay.start(fixture.request({ ...capable, trigger: ' checkout-failed ' }));
+  assert.equal(started.enabled, true);
+  assert.equal(started.uploadMode, 'trigger');
+  assert.equal(fixture.state.saved[0].data.trigger, 'checkout-failed');
+  // A reason is only a label: it is cleaned, never refused, so no label costs the recording it came with.
+  for (const [trigger, stored] of [['checkout|failed', 'checkout|failed'], ['line\nbreak\u007f', 'linebreak'], ['x'.repeat(70), 'x'.repeat(64)], ['😀'.repeat(40), '😀'.repeat(32)]]) {
+    const count = fixture.state.saved.length;
+    assert.equal(replay.start(fixture.request({ ...capable, deviceId: 'device-' + count, trigger })).enabled, true);
+    assert.equal(fixture.state.saved[count].data.trigger, stored);
+  }
+  assert.deepEqual(replay.start(fixture.request({ ...capable, trigger: 42 })), { enabled: false });
+  assert.equal(core.reason('a'.repeat(63) + '😀'), 'a'.repeat(63));
+
+  fixture.state.settings = { ...defaults, mode: 'percentage', percentage: 100 };
+  const whole = replay.start(fixture.request(base));
+  assert.equal(whole.enabled, true);
+  assert.equal(whole.uploadMode, 'session');
+  assert.equal(whole.recordNetwork, false);
+  assert.equal(fixture.state.saved[fixture.state.saved.length - 1].data.trigger, undefined);
+});
+
+test('trigger migration adds one optional session field once and removes it on rollback', () => {
+  const fields = [];
+  const sessions = {
+    name: 'replay_sessions',
+    fields: {
+      getByName: name => fields.find(field => field.name === name) || null,
+      add: field => fields.push(field),
+      removeByName: name => { const index = fields.findIndex(field => field.name === name); if (index >= 0) fields.splice(index, 1); },
+    },
+  };
+  let up, down;
+  let saves = 0;
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../pb_migrations/1795600003_replay_trigger.js'), 'utf8'), {
+    migrate: (a, b) => { up = a; down = b; },
+    TextField: function (data) { Object.assign(this, data); },
+  });
+  const app = { findCollectionByNameOrId: name => { assert.equal(name, 'replay_sessions'); return sessions; }, save: () => { saves++; } };
+  up(app); up(app);
+  assert.deepEqual(fields.map(field => ({ ...field })), [{ name: 'trigger', max: 64 }]);
+  assert.equal(saves, 1);
+  down(app); down(app);
+  assert.deepEqual(fields, []);
+  assert.equal(saves, 2);
+});
+
+test('trigger mode refuses chunks of a whole-session recording already running, and accepts triggered ones', () => {
+  const whole = uploadFixture({ upload_mode: 'trigger' });
+  assert.throws(() => replay.upload(whole.request(validChunk())), { status: 403, message: 'Replay is disabled' });
+  assert.equal(whole.chunks.length, 0);
+  const triggered = uploadFixture({ upload_mode: 'trigger' });
+  triggered.sessions.get('abc123def456ghi').set('trigger', 'checkout|failed');
+  assert.deepEqual(replay.upload(triggered.request(validChunk())), { ok: true });
+  const session = uploadFixture({});
+  assert.deepEqual(replay.upload(session.request(validChunk())), { ok: true });
 });

@@ -59,8 +59,12 @@ export function createPlugin(runtime: PluginRuntime): PocketBaseReplayPlugin {
     running?.stop();
   }
   function observabilityOptions(options: ObservabilityOptions): ObservabilityOptions {
+    // A captured error also triggers whichever recorder is running when it happens.
     return { ...options, subscribeActive: options.subscribeActive ?? subscribeActive(),
-      replay: options.replay ?? { getSessionContext: () => controller?.getSessionContext() ?? null } };
+      replay: options.replay ?? {
+        getSessionContext: () => controller?.getSessionContext() ?? null,
+        trigger: (reason) => controller ? controller.trigger(reason) : Promise.resolve(null),
+      } };
   }
 
   function subscribeActive(): SubscribeActive | undefined {
@@ -96,6 +100,10 @@ export function createPlugin(runtime: PluginRuntime): PocketBaseReplayPlugin {
     },
     async getMetrics() {
       return { metrics: controller?.getMetrics() ?? null };
+    },
+    async trigger(options) {
+      const context = await controller?.trigger(options?.reason);
+      return { sessionId: context?.sessionId ?? null };
     },
     async startObservability(options) {
       const run = ++observabilityGeneration;

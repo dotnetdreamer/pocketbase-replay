@@ -1,0 +1,69 @@
+name: Flutter plugin
+# The plugin speaks the server's HTTP API, so a server change runs this too.
+on:
+  push:
+    paths:
+      - 'plugins/flutter/**'
+      - 'server/**'
+      - 'scripts/install.mjs'
+      - '.github/workflows/flutter.yml'
+  pull_request:
+    paths:
+      - 'plugins/flutter/**'
+      - 'server/**'
+      - 'scripts/install.mjs'
+      - '.github/workflows/flutter.yml'
+defaults:
+  run:
+    working-directory: plugins/flutter
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # The oldest supported release and the current one.
+        flutter: ['3.24.5', '']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ matrix.flutter }}
+          cache: true
+      - run: flutter pub get
+      - run: flutter pub get
+        working-directory: plugins/flutter/example
+      - run: flutter analyze
+      - run: flutter test
+  server:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Start a replay server with this repository's hooks
+        working-directory: .
+        run: |
+          curl -fsSL https://github.com/pocketbase/pocketbase/releases/download/v0.39.9/pocketbase_0.39.9_linux_amd64.zip -o "$RUNNER_TEMP/pb-replay.zip"
+          printf '%s  %s\n' '4c5a1aced62ebf658bfbcfeaa944c4bfa88b173dd9d598d3cab55ea63587b36b' "$RUNNER_TEMP/pb-replay.zip" | sha256sum -c -
+          unzip -q "$RUNNER_TEMP/pb-replay.zip" -d "$RUNNER_TEMP/pb-replay-bin"
+          node scripts/install.mjs --target "$RUNNER_TEMP/replay"
+          "$RUNNER_TEMP/pb-replay-bin/pocketbase" superuser upsert ci@local.test ci-local-password-123 --dir "$RUNNER_TEMP/replay/pb_data"
+          "$RUNNER_TEMP/pb-replay-bin/pocketbase" serve --http=127.0.0.1:8090 --dir "$RUNNER_TEMP/replay/pb_data" \
+            --hooksDir "$RUNNER_TEMP/replay/pb_hooks" --migrationsDir "$RUNNER_TEMP/replay/pb_migrations" > "$RUNNER_TEMP/pb-replay.log" 2>&1 &
+          curl -fsS --retry 30 --retry-delay 1 --retry-connrefused http://127.0.0.1:8090/api/health
+      - run: flutter pub get
+      - run: flutter test test/server_test.dart
+        env:
+          REPLAY_TEST_ENDPOINT: http://127.0.0.1:8090
+          REPLAY_TEST_EMAIL: ci@local.test
+          REPLAY_TEST_PASSWORD: ci-local-password-123
+      - name: Server log
+        if: failure()
+        working-directory: .
+        run: cat "$RUNNER_TEMP/pb-replay.log"

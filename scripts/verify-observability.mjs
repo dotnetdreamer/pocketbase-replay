@@ -20,6 +20,7 @@ const endpoint = `http://localhost:${port}`;
 const identity = 'observability@local.test';
 const password = 'observability-local-test-123';
 const eraseKey = randomBytes(32).toString('hex');
+const sourcemapKey = randomBytes(32).toString('hex');
 let server;
 let hooks;
 let output = '';
@@ -38,7 +39,7 @@ async function request(path, body, token = '', method = body === undefined ? 'GE
 }
 
 async function startPocketBase() {
-  server = spawn(resolve(binary), ['serve', `--http=127.0.0.1:${port}`, '--dir', join(work, 'pb_data')], { cwd: work, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, REPLAY_AUTH_URL: '', REPLAY_ERASE_KEY: eraseKey, REPLAY_AUTH_COLLECTION: 'observability_test_users', REPLAY_TRUSTED_PROXY: 'X-Replay-Test-IP' } });
+  server = spawn(resolve(binary), ['serve', `--http=127.0.0.1:${port}`, '--dir', join(work, 'pb_data')], { cwd: work, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, REPLAY_AUTH_URL: '', REPLAY_ERASE_KEY: eraseKey, REPLAY_SOURCEMAP_KEY: sourcemapKey, REPLAY_AUTH_COLLECTION: 'observability_test_users', REPLAY_TRUSTED_PROXY: 'X-Replay-Test-IP' } });
   for (const stream of [server.stdout, server.stderr]) stream.on('data', data => { output = (output + data).slice(-30000); });
   const deadline = Date.now() + 15000;
   for (;;) {
@@ -121,6 +122,22 @@ try {
   await request('/api/replay/errors', { token: config.token, events: [{ ...error, id: 'error-e2e-3' }] });
   const ignored = await request(`/api/replay/issues/${issue.id}`, undefined, admin);
   check('ignored issues stay ignored on recurrence', () => assert.equal(ignored.issue.status, 'ignored'));
+  // A build job uploads a map with its key; a minified frame then resolves to its original line and code.
+  const sourcemapHeaders = { 'Content-Type': 'application/json', 'x-replay-sourcemap-key': sourcemapKey };
+  const sourcemap = { version: 3, sources: ['../src/checkout.ts'], names: ['submitOrder'], mappings: 'AAAAA,UACsBA',
+    sourcesContent: ['export function submitOrder(cart) {\n  return cart.items.map((item) => item.price.toFixed(2));\n}\n'] };
+  const uploadedMap = await fetch(endpoint + '/api/replay/sourcemaps?appVersion=1.0.0&path=assets%2Fapp-AbCdEfGh.js', { method: 'POST', headers: sourcemapHeaders, body: JSON.stringify(sourcemap) });
+  assert.equal(uploadedMap.status, 200, await uploadedMap.text());
+  await request('/api/replay/errors', { token: config.token, events: [{ ...error, id: 'sourcemap-e2e', service: 'sourcemap-e2e', stack: 'TypeError: Checkout failed\n    at a (https://example.test/assets/app-AbCdEfGh.js:1:12)' }] });
+  const mappedIssue = (await request('/api/replay/issues?service=sourcemap-e2e', undefined, admin)).items[0];
+  const mappedEvent = (await request(`/api/replay/issues/${mappedIssue.id}`, undefined, admin)).items[0];
+  const mappedFrames = await request(`/api/replay/errors/${mappedEvent.id}/frames`, undefined, admin);
+  const deletedMaps = await (await fetch(endpoint + '/api/replay/sourcemaps?appVersion=1.0.0', { method: 'DELETE', headers: sourcemapHeaders })).json();
+  check('source maps resolve minified frames to original code, and the build key deletes a version', () => {
+    assert.deepEqual(mappedFrames.frames[0].mapped, { source: '../src/checkout.ts', line: 2, column: 23, name: 'submitOrder' });
+    assert.equal(mappedFrames.frames[0].context.lines[1], '  return cart.items.map((item) => item.price.toFixed(2));');
+    assert.deepEqual(deletedMaps, { ok: true, appVersion: '1.0.0', deletedFiles: 1 });
+  });
   const log = { id: 'log-e2e-1', timestamp: Date.now(), level: 'warn', message: 'Payment retry', service: 'shop', attributes: { attempt: 2, authorization: 'never-store-this' } };
   await request('/api/replay/logs', { token: config.token, events: [log] });
   await request('/api/replay/logs', { token: config.token, events: [log] });

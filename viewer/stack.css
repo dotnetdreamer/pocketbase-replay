@@ -1,0 +1,41 @@
+/* Stack traces resolved through source maps, and the source map list in Diagnostics settings. */
+.telemetry-detail .stack-heading { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px 12px; margin: 20px 0 8px; }
+.telemetry-detail .stack-heading h3 { margin: 0; }
+.stack-view { display: inline-flex; gap: 2px; padding: 2px; border: 1px solid #2e3c50; border-radius: 8px; background: #151e2c; }
+.stack-view button { padding: 3px 10px; font-size: 12px; border-color: transparent; background: transparent; color: #aebdd1; }
+.stack-view button:hover { background: #1f2d42; color: #edf2f7; }
+.stack-view button[aria-pressed='true'] { background: #254c79; color: #fff; }
+.stack-state { font-size: 12px; margin: 0 0 8px; }
+.stack-state:empty { display: none; }
+.stack-original { background: #101824; border: 1px solid #2e3c50; border-radius: 8px; padding: 10px 12px; font-size: 12px; line-height: 1.6; }
+.stack-message, .stack-head, .stack-context { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
+.stack-message { margin: 0 0 8px; color: #edf2f7; white-space: pre-wrap; overflow-wrap: anywhere; }
+.stack-frames { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.stack-frame { min-width: 0; }
+.stack-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 10px; padding: 3px 6px; border-radius: 5px; }
+/* A flex summary drops the native marker, so it draws its own; rows without code line up with it. */
+summary.stack-head { cursor: pointer; list-style: none; }
+summary.stack-head::-webkit-details-marker { display: none; }
+summary.stack-head::before { content: '▸'; width: 1ch; color: #8fa3bf; }
+details[open] > summary.stack-head::before { content: '▾'; }
+summary.stack-head:hover { background: #1a2433; }
+div.stack-head { padding-left: calc(16px + 1ch); }
+.stack-function { color: #edf2f7; font-weight: 600; font-family: inherit; overflow-wrap: anywhere; }
+.stack-location { color: #8fc3ff; overflow-wrap: anywhere; }
+.stack-frame.unmapped .stack-function, .stack-frame.unmapped .stack-location { color: #8fa3bf; font-weight: 400; }
+.stack-context { margin: 4px 0 8px; padding: 6px 0; background: #0c131d; border: 1px solid #243042; border-radius: 6px; overflow-x: auto; font-size: 12px; line-height: 1.55; white-space: pre; }
+.stack-line { display: block; padding-right: 12px; }
+.stack-number { display: inline-block; min-width: 5ch; padding: 0 10px 0 8px; margin-right: 10px; text-align: right; color: #6b7f9c; border-right: 1px solid #243042; user-select: none; }
+mark.stack-line { background: rgba(213, 81, 129, .2); color: #ffe4e8; box-shadow: inset 3px 0 0 #d55181; }
+mark.stack-line .stack-number { color: #ffb3bd; }
+.stack-sr { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; border: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.sourcemap-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.sourcemap-list:empty { display: none; }
+.sourcemap-list li { display: flex; align-items: center; justify-content: space-between; gap: 12px; border: 1px solid #2e3c50; border-radius: 9px; padding: 10px 12px; background: #151e2c; }
+.sourcemap-list li > div { display: grid; gap: 2px; min-width: 0; }
+.sourcemap-list strong { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 13px; overflow-wrap: anywhere; }
+.sourcemap-list button { flex: none; font-size: 13px; padding: 6px 10px; }
+.sourcemap-settings code { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 12px; color: #bccae0; overflow-wrap: anywhere; }
+#sourcemaps-state:empty { display: none; }
+#sourcemaps-state.error { color: #ffc38a; }
+@media (max-width: 480px) { .sourcemap-list li { flex-direction: column; align-items: stretch; } .stack-number { min-width: 4ch; padding: 0 6px; margin-right: 6px; } }

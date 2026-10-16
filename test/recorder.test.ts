@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { gzipSync, gunzipSync, strFromU8, strToU8 } from 'fflate';
-import { createReplay, REPLAY_LIMITS } from '../src/engine';
+import { createRequire } from 'node:module';
+import { createReplay, REPLAY_LIMITS, triggerLabel } from '../src/engine';
+import { createObservability } from '../src/observability';
 import { fetchTransport, ReplayHttpError } from '../src/index';
 import { serializeEvent } from '../src/privacy';
 import type { ReplayChunk, ReplayEvent, ReplayMetadata, ReplayOptions, ReplayRuntime } from '../src/types';
@@ -36,6 +38,7 @@ function harness(initial: HarnessSetup = {}) {
   let refuseBeacon: (chunk: ReplayChunk) => boolean = () => false;
   let callback: ((event: ReplayEvent) => void) | undefined;
   let activity: ((active: boolean, unloading?: boolean) => void) | undefined;
+  let failure: (() => void) | undefined;
   let metadata: ReplayMetadata = { deviceId: 'device-one', platform: 'web', appVersion: '1.0', room: '' };
   const timers = new Map<number, { callback: () => void; at: number }>();
   let timerId = 0;
@@ -59,6 +62,7 @@ function harness(initial: HarnessSetup = {}) {
     compressSync: (raw) => gzipSync(strToU8(raw)),
     subscribe: (active) => { activity = active; return () => { removed++; activity = undefined; }; },
     validSelector: initial.validSelector,
+    subscribeErrors: (listener) => { failure = listener; return () => { failure = undefined; }; },
   };
   const controller = createReplay({
     endpoint: 'https://replay.test', metadata: () => metadata,
@@ -103,9 +107,13 @@ function harness(initial: HarnessSetup = {}) {
     refuseBeacon: (value: (chunk: ReplayChunk) => boolean) => { refuseBeacon = value; },
     metadata: (value: Partial<ReplayMetadata>) => { metadata = { ...metadata, ...value }; },
     activity: (value: boolean, unloading = false) => activity?.(value, unloading),
+    fail: () => failure?.(),
+    listening: () => failure !== undefined,
     counts: () => ({ loads, starts, stops, removed, sessionNumber }),
     emit: (text = 'menu opened') => callback?.({ type: 3, timestamp: now++, data: { source: 0, texts: [{ id: 2, value: text }], attributes: [], removes: [], adds: [] } }),
     raw: (event: ReplayEvent) => callback?.(event),
+    // An idle page: time passes and no timer is due yet.
+    skip: (ms: number) => { now += ms; },
     advance: async (ms: number) => {
       now += ms;
       const ready = Array.from(timers.entries()).filter(([, timer]) => timer.at <= now);
@@ -146,7 +154,7 @@ test('an omitted or empty ingestion key leaves legacy request envelopes unchange
       await settle();
       await h.controller.flush();
       assert.deepEqual(JSON.parse(h.requests[0].body), {
-        deviceId: 'device-one', accountId: '', platform: 'web', appVersion: '1.0', room: '', authToken: '',
+        deviceId: 'device-one', accountId: '', platform: 'web', appVersion: '1.0', room: '', authToken: '', features: ['trigger'],
       });
       for (const request of h.requests) assert.equal('apiKey' in JSON.parse(request.body), false);
       h.emit('exit upload'); h.activity(false, true);
@@ -866,4 +874,461 @@ test('packaged app origins map static assets to this build\'s archive on the rep
       h.controller.stop();
     }
   } finally { delete page.location; }
+});
+
+function triggerMarks(chunks: ReplayChunk[]): unknown[] {
+  return chunks.flatMap(events).filter((event) => event.type === 5 && event.data.tag === 'pbr/trigger').map((event) => event.data.payload);
+}
+
+function urls(h: { requests: { url: string }[] }): string[] {
+  return h.requests.map((request) => request.url.split('/').pop()!);
+}
+
+test('trigger mode records on the device and sends nothing before a trigger, not even at page exit', async () => {
+  const h = harness({ rules: { uploadMode: 'trigger' } });
+  try {
+    await settle();
+    assert.deepEqual(urls(h), ['config']);
+    assert.equal(h.counts().starts, 1);
+    assert.equal(h.controller.getMetrics().recording, true);
+    assert.equal(h.controller.getSessionContext(), null);
+    h.emit('kept on the device');
+    await h.controller.flush();
+    await h.advance(30000);
+    assert.equal(h.attempts.length, 0);
+    assert.ok(h.controller.getMetrics().bufferedBytes > 0);
+    h.activity(false, true);
+    assert.equal(h.beacons.length, 0);
+    assert.equal(urls(h).includes('start'), false);
+  } finally { h.controller.stop(); }
+});
+
+test('a trigger starts a session with its reason, uploads the kept history from a full snapshot, then stays live for a minute', async () => {
+  const h = harness({ rules: { uploadMode: 'trigger' } });
+  try {
+    await settle();
+    h.emit('before the error');
+    const context = await h.controller.trigger(' checkout-failed ');
+    assert.deepEqual(context, { sessionId: 'session-1', token: 'upload-secret' });
+    const start = JSON.parse(h.requests.find((request) => request.url.endsWith('/start'))!.body);
+    assert.equal(start.trigger, 'checkout-failed');
+    assert.deepEqual(start.features, ['trigger']);
+    await settle();
+    assert.equal(h.accepted[0].seq, 0);
+    assert.equal(h.accepted[0].hasSnapshot, true);
+    assert.ok(h.accepted.flatMap(texts).includes('before the error'));
+    assert.deepEqual(triggerMarks(h.accepted), [{ reason: 'checkout-failed' }]);
+    assert.deepEqual(h.controller.getSessionContext(), context);
+    h.emit('right after');
+    await h.controller.flush();
+    assert.ok(h.accepted.flatMap(texts).includes('right after'));
+    await h.advance(REPLAY_LIMITS.liveMs + 5000);
+    await h.advance(0);
+    h.emit('kept again');
+    await h.controller.flush();
+    h.activity(false, true);
+    assert.equal(h.accepted.concat(h.beacons).flatMap(texts).includes('kept again'), false);
+    assert.equal(h.controller.getSessionContext(), null);
+    assert.equal(urls(h).filter((url) => url === 'start').length, 1);
+  } finally { h.controller.stop(); }
+});
+
+test('the device keeps from the newest full snapshot at least a minute old and drops older parts', async () => {
+  const h = harness({ rules: { uploadMode: 'trigger' } });
+  try {
+    await settle();
+    h.emit('first minute');
+    await h.advance(REPLAY_LIMITS.checkoutMs);
+    h.emit('second minute');
+    await h.advance(REPLAY_LIMITS.checkoutMs);
+    h.emit('third minute');
+    await h.controller.trigger('report');
+    await settle();
+    const uploaded = h.accepted.flatMap(texts);
+    assert.equal(uploaded.includes('first minute'), false);
+    assert.ok(uploaded.includes('second minute'));
+    assert.ok(uploaded.includes('third minute'));
+    assert.equal(h.accepted[0].hasSnapshot, true);
+    assert.deepEqual(h.accepted.map((chunk) => chunk.seq), h.accepted.map((_chunk, index) => index));
+  } finally { h.controller.stop(); }
+});
+
+test('a part too large to keep starts again from a fresh snapshot instead of growing', async () => {
+  const h = harness({ rules: { uploadMode: 'trigger' } });
+  try {
+    await settle();
+    const large = 'x'.repeat(900 * 1024);
+    for (let i = 0; i < 3; i++) h.emit(large);
+    assert.ok(h.controller.getMetrics().droppedChunks > 0);
+    assert.ok(h.controller.getMetrics().bufferedBytes <= REPLAY_LIMITS.keptBytes);
+    await h.advance(5000);
+    h.emit('after the restart');
+    await h.controller.trigger('report');
+    await settle();
+    assert.equal(h.accepted[0].hasSnapshot, true);
+    assert.ok(h.accepted.flatMap(texts).includes('after the restart'));
+  } finally { h.controller.stop(); }
+});
+
+test('an uncaught error is a trigger in trigger mode only, unless triggerOnError is false', async () => {
+  const h = harness({ rules: { uploadMode: 'trigger' } });
+  try {
+    await settle();
+    assert.equal(h.listening(), true);
+    h.emit('before the crash');
+    h.fail();
+    await settle();
+    assert.equal(JSON.parse(h.requests.find((request) => request.url.endsWith('/start'))!.body).trigger, 'error');
+    assert.ok(h.accepted.flatMap(texts).includes('before the crash'));
+  } finally { h.controller.stop(); }
+  assert.equal(h.listening(), false);
+  const quiet = harness({ rules: { uploadMode: 'trigger' }, options: { triggerOnError: false } });
+  try { await settle(); assert.equal(quiet.listening(), false); } finally { quiet.controller.stop(); }
+  const whole = harness();
+  try { await settle(); assert.equal(whole.listening(), false); } finally { whole.controller.stop(); }
+});
+
+test('diagnostics respect triggerOnError false while explicit triggers still upload the replay', async () => {
+  const h = harness({ rules: { uploadMode: 'trigger' }, options: { triggerOnError: false } });
+  const diagnostics: { url: string; body: any }[] = [];
+  const observer = createObservability({
+    endpoint: 'https://replay.test', metadata: () => ({ deviceId: 'device-one', platform: 'web', appVersion: '1' }),
+    errors: true, logs: true, replay: h.controller,
+    transport: { post: async (url, raw) => {
+      diagnostics.push({ url, body: JSON.parse(raw) });
+      return { enabled: true, errorsEnabled: true, logsEnabled: true, token: 't'.repeat(64), expiresIn: 14400000 };
+    } },
+  }, { now: h.runtime.now, schedule: h.runtime.schedule, cancel: h.runtime.cancel });
+  try {
+    await settle(); await observer.refresh();
+    observer.captureException(new Error('handled failure'));
+    observer.captureLog('error', 'error log');
+    await settle(); await observer.flush();
+    assert.equal(h.requests.some((request) => request.url.endsWith('/start')), false);
+    assert.equal(h.accepted.length, 0);
+    assert.ok(diagnostics.some((request) => request.url.endsWith('/errors')));
+    assert.ok(diagnostics.some((request) => request.url.endsWith('/logs')));
+    await h.controller.trigger('error');
+    await h.controller.flush();
+    assert.ok(h.accepted.length > 0);
+  } finally { observer.stop(); h.controller.stop(); }
+});
+
+test('in whole-session mode a trigger only marks the timeline, once per reason within a few seconds', async () => {
+  const h = harness();
+  try {
+    await settle();
+    const context = await h.controller.trigger('report');
+    assert.deepEqual(context, { sessionId: 'session-1', token: 'upload-secret' });
+    await h.controller.trigger('report');
+    await h.controller.flush();
+    assert.deepEqual(triggerMarks(h.accepted), [{ reason: 'report' }]);
+    await h.advance(REPLAY_LIMITS.markMs);
+    await h.controller.trigger('report');
+    await h.controller.trigger();
+    await h.controller.flush();
+    assert.deepEqual(triggerMarks(h.accepted), [{ reason: 'report' }, { reason: 'report' }, { reason: 'manual' }]);
+    assert.equal(urls(h).filter((url) => url === 'start').length, 1);
+  } finally { h.controller.stop(); }
+  const off = harness({ enabled: false });
+  try { await settle(); assert.equal(await off.controller.trigger('report'), null); } finally { off.controller.stop(); }
+});
+
+test('switching the server between whole sessions and triggers starts over in the new mode', async () => {
+  const h = harness();
+  try {
+    await settle();
+    assert.equal(h.controller.getMetrics().sessionId, 'session-1');
+    h.rules({ uploadMode: 'trigger' });
+    await h.controller.refresh();
+    assert.equal(h.controller.getMetrics().sessionId, null);
+    assert.equal(h.controller.getMetrics().recording, true);
+    h.emit('kept');
+    await h.controller.flush();
+    const before = h.accepted.length;
+    h.rules({});
+    await h.controller.refresh();
+    await h.controller.flush();
+    assert.equal(h.controller.getMetrics().sessionId, 'session-2');
+    assert.equal(h.accepted.slice(before).flatMap(texts).includes('kept'), false);
+    assert.equal(h.accepted[before].hasSnapshot, true);
+  } finally { h.controller.stop(); }
+});
+
+test('between triggers an ending session leaves the kept history for the next trigger\'s session', async () => {
+  const h = harness({ rules: { uploadMode: 'trigger' } });
+  h.startReply({ expiresIn: 130000 });
+  try {
+    await settle();
+    await h.controller.trigger('first');
+    await settle();
+    await h.advance(REPLAY_LIMITS.liveMs + 5000);
+    await h.advance(60000);
+    assert.equal(h.controller.getMetrics().sessionId, null);
+    assert.equal(h.controller.getMetrics().recording, true);
+    h.emit('after the session ended');
+    const context = await h.controller.trigger('second');
+    assert.equal(context!.sessionId, 'session-2');
+    await settle();
+    const second = h.accepted.filter((chunk) => chunk.sessionId === 'session-2');
+    assert.equal(second[0].seq, 0);
+    assert.equal(second[0].hasSnapshot, true);
+    assert.ok(second.flatMap(texts).includes('after the session ended'));
+  } finally { h.controller.stop(); }
+});
+
+test('a trigger whose session cannot start yet resolves null and starts at the next poll', async () => {
+  const h = harness({ rules: { uploadMode: 'trigger' } });
+  try {
+    await settle();
+    h.emit('waiting for the server');
+    h.startStatus(503);
+    assert.equal(await h.controller.trigger('error'), null);
+    assert.equal(h.accepted.length, 0);
+    h.startStatus(0);
+    await h.advance(REPLAY_LIMITS.configIntervalMs);
+    await settle();
+    assert.equal(h.controller.getMetrics().sessionId, 'session-1');
+    assert.ok(h.accepted.flatMap(texts).includes('waiting for the server'));
+  } finally { h.controller.stop(); }
+});
+
+test('an account change between triggers drops what the device kept for the old account', async () => {
+  const h = harness({ rules: { uploadMode: 'trigger' } });
+  try {
+    await settle();
+    h.emit('old account');
+    h.metadata({ accountId: 'someone-else', authToken: 'other-token' });
+    await h.controller.refresh();
+    h.emit('new account');
+    await h.controller.trigger('report');
+    await settle();
+    const uploaded = h.accepted.flatMap(texts);
+    assert.equal(uploaded.includes('old account'), false);
+    assert.ok(uploaded.includes('new account'));
+  } finally { h.controller.stop(); }
+});
+
+test('a trigger right after the device changes starts a session for the new device, without the old one\'s history', async () => {
+  // Live, between triggers while the session is still open, and waiting for the snapshot that follows a live minute.
+  for (const state of ['live', 'kept', 'awaiting snapshot']) {
+    const h = harness({ rules: { uploadMode: 'trigger' } });
+    try {
+      await settle();
+      await h.controller.trigger('first');
+      await h.controller.flush();
+      if (state !== 'live') { h.skip(REPLAY_LIMITS.liveMs + 1000); await h.controller.flush(); }
+      if (state === 'kept') await h.advance(0);
+      h.emit('device one');
+      const before = h.accepted.length;
+      h.metadata({ deviceId: 'device-two' });
+      const context = await h.controller.trigger('after-switch');
+      assert.equal(context?.sessionId, 'session-2', state);
+      const starts = h.requests.filter((request) => request.url.endsWith('/start')).map((request) => JSON.parse(request.body));
+      assert.deepEqual(starts.map((body) => [body.deviceId, body.trigger]), [['device-one', 'first'], ['device-two', 'after-switch']], state);
+      assert.equal(h.controller.getMetrics().recording, true, state);
+      await h.advance(0);
+      h.emit('device two');
+      await h.controller.flush();
+      const later = h.accepted.slice(before);
+      assert.ok(later.length && later.every((chunk) => chunk.sessionId === 'session-2'), state);
+      assert.equal(later[0].hasSnapshot, true, state);
+      assert.deepEqual(triggerMarks(later), [{ reason: 'after-switch' }], state);
+      assert.ok(later.flatMap(texts).includes('device two'), state);
+      assert.equal(h.accepted.flatMap(texts).includes('device one'), false, state);
+      assert.deepEqual(h.controller.getSessionContext(), context, state);
+    } finally { h.controller.stop(); }
+  }
+});
+
+const replayServer = createRequire(import.meta.url)('../server/pb_hooks/lib/replay-core.js');
+
+test('trigger labels are cleaned exactly as the server cleans them, so none can make it refuse the session', () => {
+  for (const reason of ['checkout|failed', '  report  ', 'line\nbreak\u007f', 'x'.repeat(70), '😀'.repeat(40), 'a'.repeat(63) + '😀', '\t', '']) {
+    assert.equal(triggerLabel(reason), replayServer.reason(reason) || 'manual', JSON.stringify(reason));
+  }
+  assert.equal(triggerLabel(undefined), 'manual');
+});
+
+test('a trigger reason with a pipe keeps the kept history and starts the session', async () => {
+  const h = harness({ rules: { uploadMode: 'trigger' } });
+  try {
+    await settle();
+    h.emit('before the failure');
+    const context = await h.controller.trigger('checkout|failed');
+    assert.equal(context!.sessionId, 'session-1');
+    assert.equal(JSON.parse(h.requests.find((request) => request.url.endsWith('/start'))!.body).trigger, 'checkout|failed');
+    await settle();
+    assert.ok(h.accepted.flatMap(texts).includes('before the failure'));
+    assert.equal(h.controller.getMetrics().recording, true);
+  } finally { h.controller.stop(); }
+});
+
+test('once the live minute passes on an idle page the session is no longer current, and a trigger continues it', async () => {
+  const h = harness({ rules: { uploadMode: 'trigger' } });
+  try {
+    await settle();
+    const context = await h.controller.trigger('first');
+    await settle();
+    h.skip(REPLAY_LIMITS.liveMs + 1000);
+    assert.equal(h.controller.getSessionContext(), null);
+    assert.deepEqual(await h.controller.trigger('error'), context);
+    assert.deepEqual(h.controller.getSessionContext(), context);
+    h.emit('after the handled error');
+    await h.controller.flush();
+    assert.ok(h.accepted.flatMap(texts).includes('after the handled error'));
+    assert.deepEqual(triggerMarks(h.accepted), [{ reason: 'first' }, { reason: 'error' }]);
+    assert.equal(urls(h).filter((url) => url === 'start').length, 1);
+  } finally { h.controller.stop(); }
+});
+
+test('a trigger right after the live minute ended still uploads from a fresh snapshot, with its mark after it', async () => {
+  const h = harness({ rules: { uploadMode: 'trigger' } });
+  try {
+    await settle();
+    await h.controller.trigger('first');
+    await settle();
+    h.skip(REPLAY_LIMITS.liveMs + 1000);
+    await h.controller.flush();
+    assert.equal(h.controller.getSessionContext(), null);
+    const before = h.accepted.length;
+    await h.controller.trigger('again');
+    await h.advance(0);
+    h.emit('after the second trigger');
+    await h.controller.flush();
+    const later = h.accepted.slice(before);
+    assert.ok(later.some((chunk) => chunk.hasSnapshot));
+    assert.ok(later.flatMap(texts).includes('after the second trigger'));
+    // The mark was made while that snapshot was pending; it waited for it instead of being dropped.
+    assert.deepEqual(triggerMarks(later), [{ reason: 'again' }]);
+    const order = later.flatMap(events);
+    const snapshot = order.findIndex((event) => event.type === 2);
+    const mark = order.findIndex((event) => event.type === 5 && event.data.tag === 'pbr/trigger');
+    assert.ok(snapshot >= 0 && mark > snapshot);
+    assert.ok(order[mark].timestamp >= order[snapshot].timestamp);
+  } finally { h.controller.stop(); }
+});
+
+test('after a long sleep a trigger on a live session that has expired asks for a new session, keeping its mark', async () => {
+  const h = harness({ rules: { uploadMode: 'trigger' } });
+  try {
+    await settle();
+    const first = await h.controller.trigger('first');
+    await h.controller.flush();
+    // The page slept for five hours with its timers held, so nothing ended the live minute and the session expired.
+    h.skip(5 * 60 * 60 * 1000);
+    const woken = await h.controller.trigger('after-wake');
+    assert.equal(woken?.sessionId, 'session-2');
+    assert.notEqual(woken?.sessionId, first?.sessionId);
+    const starts = h.requests.filter((request) => request.url.endsWith('/start')).map((request) => JSON.parse(request.body).trigger);
+    assert.deepEqual(starts, ['first', 'after-wake']);
+    await h.advance(0);
+    h.emit('after waking');
+    await h.controller.flush();
+    const second = h.accepted.filter((chunk) => chunk.sessionId === 'session-2');
+    assert.equal(second[0].seq, 0);
+    assert.equal(second[0].hasSnapshot, true);
+    assert.deepEqual(triggerMarks(second), [{ reason: 'after-wake' }]);
+    assert.ok(second.flatMap(texts).includes('after waking'));
+    assert.deepEqual(h.controller.getSessionContext(), woken);
+  } finally { h.controller.stop(); }
+});
+
+test('a session that ends during a live minute leaves recording running on the device for the next trigger', async () => {
+  const h = harness({ rules: { uploadMode: 'trigger' } });
+  h.startReply({ expiresIn: 70000 });
+  try {
+    await settle();
+    await h.controller.trigger('first');
+    await settle();
+    const starts = h.counts().starts;
+    // The poll 45 seconds in finds the session within 30 seconds of its end while the minute is still live.
+    await h.advance(REPLAY_LIMITS.configIntervalMs);
+    assert.equal(h.controller.getMetrics().sessionId, null);
+    assert.equal(h.controller.getMetrics().recording, true);
+    assert.equal(h.counts().starts, starts);
+    assert.equal(h.controller.getSessionContext(), null);
+    await h.advance(0);
+    h.emit('kept after the session ended');
+    const context = await h.controller.trigger('second');
+    assert.equal(context?.sessionId, 'session-2');
+    await settle();
+    const second = h.accepted.filter((chunk) => chunk.sessionId === 'session-2');
+    assert.equal(second[0].seq, 0);
+    assert.equal(second[0].hasSnapshot, true);
+    assert.ok(second.flatMap(texts).includes('kept after the session ended'));
+  } finally { h.controller.stop(); }
+});
+
+test('the server turns PocketBase calls on for the recorder, which gets the live session to link them', async () => {
+  type Recorder = import('../src/types').RecorderOptions;
+  const client = { send: async () => ({}) };
+  const h = harness({ options: { pocketbase: client }, rules: { recordPocketbase: true, tracePocketbaseRequests: true } });
+  try {
+    await settle();
+    const recorder = h.captured[0] as Recorder;
+    assert.equal(recorder.recordPocketbase, true);
+    assert.equal(recorder.tracePocketbaseRequests, true);
+    assert.equal(recorder.pocketbase, client);
+    assert.equal(recorder.replaySession?.(), 'session-1');
+    // Turning it off restarts capture with a fresh snapshot, like the other rules.
+    h.rules({ recordPocketbase: false });
+    await h.controller.refresh();
+    assert.equal(h.captured.length, 2);
+    assert.equal((h.captured[1] as Recorder).recordPocketbase, false);
+    assert.equal((h.captured[1] as Recorder).tracePocketbaseRequests, false);
+    // An older server never answers the setting, so nothing is recorded.
+    const older = harness({ options: { pocketbase: client } });
+    try { await settle(); assert.equal((older.captured[0] as Recorder).recordPocketbase, false); } finally { older.controller.stop(); }
+    // Between triggers there is no live session to name.
+    const kept = harness({ options: { pocketbase: client }, rules: { uploadMode: 'trigger', recordPocketbase: true } });
+    try {
+      await settle();
+      assert.equal((kept.captured[0] as Recorder).replaySession?.(), null);
+      await kept.controller.trigger('report');
+      assert.equal((kept.captured[0] as Recorder).replaySession?.(), 'session-1');
+    } finally { kept.controller.stop(); }
+  } finally { h.controller.stop(); }
+});
+
+test('a full snapshot larger than the buffer keeps its meta event, so kept history still plays', async () => {
+  const { recoverEvents } = await import('../viewer/decode');
+  let now = 1790500000000;
+  let emit: ((event: ReplayEvent) => void) | undefined;
+  const chunks: ReplayChunk[] = [];
+  const timers = new Map<number, { callback: () => void; at: number }>();
+  let timerId = 0;
+  // Larger than the 128 KiB buffer, as a page with inlined stylesheets easily is.
+  const snapshot = () => {
+    emit?.({ type: 4, timestamp: now++, data: { href: 'https://example.test/', width: 400, height: 800 } });
+    emit?.({ type: 2, timestamp: now++, data: { node: { type: 0, id: 1, childNodes: [], css: 'x'.repeat(REPLAY_LIMITS.bufferBytes + 50000) }, initialOffset: { top: 0, left: 0 } } });
+  };
+  const replay = createReplay({
+    endpoint: 'https://replay.test', metadata: () => ({ deviceId: 'device-one', platform: 'web', appVersion: '1.0', room: '' }),
+    transport: { post: async (url, body) => {
+      if (url.endsWith('/config')) return { enabled: true, uploadIntervalMs: 25000, uploadMode: 'trigger' };
+      if (url.endsWith('/start')) return { enabled: true, sessionId: 'abcdefghij12345', token: 'T'.repeat(64), expiresIn: 14400000, uploadMode: 'trigger' };
+      chunks.push(JSON.parse(body) as ReplayChunk);
+      return { ok: true };
+    } },
+  }, {
+    now: () => now, performanceNow: () => 0,
+    schedule: (callback, ms) => { timers.set(++timerId, { callback, at: now + ms }); return timerId; },
+    cancel: (timer) => { timers.delete(timer as number); },
+    loadRecorder: async () => ({ start: (callback) => { emit = callback; snapshot(); return () => { emit = undefined; }; }, snapshot }),
+    compress: async (raw) => gzipSync(strToU8(raw)), compressSync: (raw) => gzipSync(strToU8(raw)),
+  });
+  try {
+    await settle();
+    emit?.({ type: 3, timestamp: now++, data: { source: 2, type: 2, id: 1, x: 1, y: 1 } });
+    assert.ok((await replay.trigger('report'))?.sessionId);
+    await settle();
+    await replay.flush();
+    await settle();
+    const types = chunks.flatMap(events).map((event) => event.type);
+    assert.deepEqual(types.slice(0, 2), [4, 2]);
+    const played = recoverEvents(chunks.map((chunk) => ({ seq: chunk.seq, rawBytes: chunk.rawBytes, data: chunk.data, encoding: chunk.encoding })));
+    assert.equal(played.events[0].type, 4);
+    assert.ok(played.events.some((event) => event.type === 2));
+  } finally { replay.stop(); }
 });

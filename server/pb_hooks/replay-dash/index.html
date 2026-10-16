@@ -106,6 +106,7 @@
         <fieldset>
           <legend>Error tracking</legend>
           <label class="check"><input name="errors_enabled" type="checkbox"><span><strong>Collect errors</strong><small>Capture errors and group matching occurrences into issues</small></span></label>
+          <label class="check"><input name="server_errors" type="checkbox"><span><strong>Capture server errors</strong><small>Errors thrown in your pb_hooks routes, hooks and cron jobs, and errors PocketBase logs, become issues under the service pocketbase</small></span></label>
           <label class="check"><input name="alerts_enabled" type="checkbox"><span><strong>Issue alerts</strong><small>Raise an alert when an issue first appears or a resolved issue returns. Alerts are listed in the Issues tab and sent to the webhook below</small></span></label>
           <label>Alert webhook (optional)<input name="alert_webhook_url" type="url" inputmode="url" maxlength="2048" autocomplete="off" spellcheck="false" placeholder="https://hooks.slack.com/services/..."><small>Slack, Discord and Google Chat addresses get a message they can show. Any other address gets the alerts as JSON. Alerts go out within a minute</small></label>
           <div class="webhook-test"><button id="test-webhook" type="button" class="secondary">Send a test alert</button><span id="webhook-test-state" role="status"></span></div>
@@ -119,6 +120,12 @@
         <fieldset>
           <legend>Storage</legend>
           <label>Daily error and log upload limit (MB)<input name="daily_limit_mb" type="number" min="1" max="1048576" step="1" required></label>
+        </fieldset>
+        <fieldset class="sourcemap-settings">
+          <legend>Source maps</legend>
+          <p id="sourcemaps-state" class="hint" role="status" aria-live="polite"></p>
+          <ul id="sourcemaps" class="sourcemap-list" aria-label="Uploaded source map versions"></ul>
+          <p class="hint">Upload the maps of each build to see original code in stack traces. The version must equal the appVersion your app reports. Deleting a version takes effect at once<br><code>REPLAY_SOURCEMAP_KEY=... npx pb-replay-sourcemaps --endpoint https://replay.example.com --version 1.4.0 --from dist</code></p>
         </fieldset>
         <details class="settings-advanced">
           <summary>Rate limits</summary>
@@ -153,6 +160,7 @@
             <label data-mode="percentage">Percentage of devices<input name="percentage" type="number" min="0" max="100" step="0.1"></label>
           </div>
           <label data-mode="accounts">Account IDs<textarea name="account_ids" rows="3" placeholder="One account ID per line"></textarea></label>
+          <label>Upload<select name="upload_mode"><option value="session">Whole sessions</option><option value="trigger">Only when something breaks</option></select><small id="upload-mode-hint"></small></label>
         </fieldset>
         <fieldset>
           <legend>Storage</legend>
@@ -166,6 +174,12 @@
           <label>Mask text in<small>CSS selectors separated by commas. Matching text plays back as *</small><textarea class="code" name="mask_selector" rows="3" maxlength="20000" spellcheck="false" autocomplete="off" placeholder=".chat-message, [class*=&quot;name&quot;]"></textarea></label>
           <label>Block elements<small>CSS selectors separated by commas. Matching elements play back as empty boxes</small><textarea class="code" name="block_selector" rows="3" maxlength="20000" spellcheck="false" autocomplete="off" placeholder=".avatar, .private-photo"></textarea></label>
           <label class="check"><input name="record_images" type="checkbox"><span><strong>Include images created in the app</strong><small>Show extra images in replays, such as avatars and photos. Large images are skipped.</small></span></label>
+        </fieldset>
+        <fieldset>
+          <legend>Activity</legend>
+          <label class="check"><input name="record_pocketbase" type="checkbox"><span><strong>Record PocketBase calls</strong><small>For apps that pass their PocketBase client to startReplay: each call's collection, action, status, item count and the names of fields PocketBase refused. Never the values sent or returned</small></span></label>
+          <label class="check"><input name="record_network" type="checkbox"><span><strong>Record network requests</strong><small>Method, address without its query, status and timing of each request the app makes. Headers and bodies are never recorded</small></span></label>
+          <label class="check"><input name="record_console" type="checkbox"><span><strong>Record console messages</strong><small>Console output and uncaught errors, with common secrets and email addresses removed. Check what your app logs before turning this on</small></span></label>
         </fieldset>
         <p class="hint">Changes take effect within a minute and apply to what gets recorded next. If the app can’t use a privacy rule, recording pauses to protect private text.</p>
         <p id="settings-error" class="dialog-error" role="alert"></p>
@@ -206,6 +220,7 @@
           <div class="detail-actions"><button id="recording-issues" type="button" class="secondary">Issues for this session</button><button id="recording-logs" type="button" class="secondary">Logs for this session</button></div>
           <div id="player"></div>
           <p id="clock" class="clock"></p>
+          <section id="devtools" class="devtools" aria-label="Session activity" hidden></section>
         </div>
       </section>
     </div>
@@ -247,7 +262,7 @@
             <h3>Occurrences</h3>
             <ul id="occurrences" class="telemetry-list occurrence-list"></ul>
             <p id="occurrences-state" class="list-state" role="status"></p><button id="occurrences-more" type="button" class="secondary" hidden>Load more occurrences</button>
-            <div id="occurrence-detail" hidden><h3>Selected occurrence</h3><div id="occurrence-context"></div><h3>Stack trace</h3><pre id="occurrence-stack" class="structured"></pre><h3>Attributes</h3><pre id="occurrence-attributes" class="structured"></pre></div>
+            <div id="occurrence-detail" hidden><h3>Selected occurrence</h3><div id="occurrence-context"></div><div class="stack-heading"><h3 id="occurrence-stack-title">Stack trace</h3><div id="stack-view" class="stack-view" role="group" aria-label="Stack trace view" hidden><button type="button" data-stack-view="original" aria-pressed="true">Original</button><button type="button" data-stack-view="minified" aria-pressed="false">Minified</button></div></div><p id="stack-state" class="stack-state"></p><div id="occurrence-frames" class="stack-original" role="region" aria-labelledby="occurrence-stack-title" hidden></div><pre id="occurrence-stack" class="structured"></pre><h3>Attributes</h3><pre id="occurrence-attributes" class="structured"></pre></div>
           </div>
         </section>
       </div>

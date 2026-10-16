@@ -15,6 +15,9 @@ export interface ExceptionContext {
 interface EventContext {
   id: string;
   timestamp: number;
+  // The app build the entry was captured in, empty when the app reports none. Like `id` and `timestamp`,
+  // beforeSend cannot change it.
+  appVersion?: string;
   service?: string;
   room?: string;
   sessionId?: string;
@@ -40,7 +43,8 @@ export interface ObservabilityOptions {
   errors?: boolean | ErrorTrackingOptions;
   logs?: boolean | LogCaptureOptions;
   service?: string;
-  replay?: Pick<ReplayController, 'getSessionContext'>;
+  // A replay with `trigger` also uploads what it kept on the device when an error is captured.
+  replay?: Pick<ReplayController, 'getSessionContext'> & Partial<Pick<ReplayController, 'trigger'>>;
   session?: () => ReplaySessionContext | null;
   sensitiveText?: () => string[];
   beforeSend?: (event: ObservabilityEvent) => ObservabilityEvent | null;

@@ -101,10 +101,14 @@ The dashboard edits rows in `replay_settings`
 | `mask_selector` | CSS selector list whose text is recorded as `*` | `''` |
 | `block_selector` | CSS selector list whose elements are replaced by empty boxes | `''` |
 | `record_images` | `true` records images the app builds as `data:` URLs | `false` |
+| `record_network` | `true` records each request's method, address without its query, status and timing | `false` |
+| `record_console` | `true` records console messages and uncaught errors, redacted | `false` |
+| `record_pocketbase` | `true` records the calls of a PocketBase client an app passes to `startReplay`, never their values. See [PocketBase calls](integration.md#pocketbase-calls) | `true` |
+| `upload_mode` | `session` uploads whole sessions; `trigger` keeps the recording on the device and uploads it only [when something breaks](#record-only-when-something-breaks) | `session` |
 
 Rows store values as JSON text, so a selector row holds a JSON string such as `".chat-message, [class*=\"name\"]"`
 
-The migration does not seed the `daily_limit_mb`, `mask_selector`, `block_selector` or `record_images` rows, so the server uses the initial values above until those settings are saved
+The migration does not seed the `daily_limit_mb`, `mask_selector`, `block_selector`, `record_images`, `record_network`, `record_console`, `record_pocketbase` or `upload_mode` rows, so the server uses the initial values above until those settings are saved
 
 Open clients check settings every 45 seconds
 
@@ -115,6 +119,22 @@ When several apps share one server, `REPLAY_APP_VERSION_PREFIX` can limit record
 To include a second app while the primary prefix remains in place, set both `REPLAY_EXTRA_APP_VERSION_PREFIX` and `REPLAY_EXTRA_PLATFORM`. A client is selected when its `appVersion` matches the primary prefix, or when it matches the extra prefix **and** its `platform` equals the extra platform. Both values are checked again against the stored session on upload. Leaving either extra value unset preserves the primary-prefix behavior. When the primary prefix is unset, all apps remain eligible, as before. These values are recording selectors, not authentication rules
 
 Every minute, a sweep deletes expired sessions 20 at a time for up to about 5 seconds
+
+### Record only when something breaks
+
+With `upload_mode` set to `trigger`, chosen as **Only when something breaks** under **Recording settings**, a selected device records as usual but keeps the recording in memory and uploads nothing. A trigger uploads what it kept and records live for one more minute:
+
+- An uncaught error or unhandled promise rejection in the page, unless the app passes `triggerOnError: false`
+- An error captured by `startObservability` when its `replay` option is the recorder and `beforeSend` keeps the error
+- The app calling `replay.trigger(reason)`, for example from a **Report a problem** button. See [triggers](integration.md#triggers-and-bug-reports)
+
+The device keeps from the newest full screen snapshot that is at least a minute old, so an upload starts one to two minutes before the trigger and always opens with a complete screen. It takes a fresh snapshot every minute for this and keeps at most 2 MiB of recording, starting again from a new snapshot when one part alone would exceed that. An uncaught error or a `trigger()` call during the live minute extends it
+
+A server session starts only with the first trigger, so the hourly session limits and the daily storage budget count only devices where something happened. The session list shows the first trigger's reason, and the recording marks every trigger on its timeline. A later trigger after the live minute uploads into the same session while it lasts, with a gap on its timeline. A session lasts four hours: once it has ended or has less than 30 seconds left, for example after the device slept, the device goes on recording and keeping, and the next trigger starts a new session
+
+Nothing is sent at page exit unless a trigger is live, and signing in or out discards what the device kept. Clients that predate trigger mode do not record at all while it is on, rather than upload whole sessions, and a whole-session recording still running when the mode is turned on is refused at its next upload. Sampling still decides which devices record, so `percentage` at 100 keeps a recording on every device and uploads only the ones that break
+
+Errors captured while the device is only keeping its recording wait up to 10 seconds for the triggered session, so their **Watch replay** link opens the recording around them
 
 ### Storage budget
 
@@ -138,6 +158,8 @@ Edit `mask_selector` and `block_selector` under **Recording settings** in the da
 When `/config` and `/start` answer `enabled: true`, they send these settings to the app as `maskTextSelector` and `blockSelector`
 
 The app combines them with its built-in rules for inputs, `[contenteditable]`, `[data-replay-mask]`, canvas, media, iframes and `[data-replay-block]`, plus any `maskTextSelector` or `blockSelector` passed to `startReplay`
+
+A [Flutter app](../plugins/flutter/README.md#privacy) has no DOM for selectors to match. It reads two rules: `*` among the mask rules masks all its text, and `img` among the block rules all its images; `*` among the block rules does both. Text fields and `ReplayMask` areas are always masked there, and **Include images created in the app** does not apply, since a Flutter frame is an image of the whole screen
 
 ### Images built by the app
 
@@ -188,3 +210,15 @@ A chunk whose sequence number has already been played is skipped
 A session continues while its app is in the background, so it can hold hours with nothing recorded. Each stretch over 10 seconds with nothing recorded plays as 1 second, a mark on the timeline shows where, and the time on the device clock is shown under the player
 
 An event the player cannot apply is skipped and counted under the recording's details, instead of stopping playback
+
+### Activity panel
+
+Below the player, the activity panel lists the recording's clicks and page changes and, when recorded, its PocketBase calls, network requests and console messages, together with the session's stored errors and logs, up to the newest 1,000 of each with a note when there are more. Filter by kind, or choose **Errors** for errors, console errors and failed requests. Selecting a row moves playback there, and the row for the current moment is highlighted while the recording plays
+
+A click names the element as it was at that moment, such as `button "Pay now"`, with masked text shown as `*`. Errors, failed requests and triggers are also marked on the timeline, at most 100 marks, with marks close together combined. A recording with more than 2,000 rows shows the rows around the current moment
+
+Network requests and console messages need **Record network requests** and **Record console messages** under **Recording settings**. Both are off by default and apply to recordings made after the change
+
+Calls of a [PocketBase client the app passes in](integration.md#pocketbase-calls) are listed under **PocketBase**, named by collection and action, such as `orders.create`, with their status, item count and refused fields. Failed calls are marked on the timeline. Selecting one opens its details under the row: what the app saw and, when the replay server is the app's own PocketBase, the server's side, such as the API rule that refused it or the hook error behind it
+
+The explanations come from the collection's current rules, a current lookup of the record and, with `REPLAY_TRACE_REQUESTS=on`, PocketBase's request log. Inferences are marked as likely, and rules may have changed since the recording. Refused fields show names and codes; arbitrary validation messages are omitted. See [PocketBase calls](integration.md#pocketbase-calls) for the opt-in request-log marker and tracing overhead

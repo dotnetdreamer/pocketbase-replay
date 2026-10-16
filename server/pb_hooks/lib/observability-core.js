@@ -13,7 +13,7 @@ const LIMITS = {
   webhookChars: 2048,
 };
 const DEFAULTS = {
-  errors_enabled: false, logs_enabled: false, alerts_enabled: true,
+  errors_enabled: false, logs_enabled: false, alerts_enabled: true, server_errors: true,
   errors_retention_days: 30, logs_retention_days: 14, daily_limit_mb: 64, alert_webhook_url: '',
   sessions_per_device_hour: 30, sessions_per_ip_hour: 120, sessions_per_hour: 20000,
   config_requests_per_ip_minute: 120, upload_requests_per_ip_minute: 120, upload_mb_per_ip_hour: 8,
@@ -36,6 +36,9 @@ function settings(value) {
     if (typeof value[key] !== 'boolean') replay.fail(400, 'Invalid ' + key);
     result[key] = value[key];
   }
+  // Errors PocketBase itself reports; on unless turned off, and only while errors_enabled is on.
+  if (value.server_errors !== undefined && typeof value.server_errors !== 'boolean') replay.fail(400, 'Invalid server_errors');
+  result.server_errors = value.server_errors !== false;
   for (const key of ['errors_retention_days', 'logs_retention_days']) result[key] = replay.integer(value[key], key, 1, 365);
   result.daily_limit_mb = replay.integer(value.daily_limit_mb, 'daily_limit_mb', 1, 1048576);
   result.alert_webhook_url = webhook(value.alert_webhook_url);
@@ -125,6 +128,10 @@ function event(value, kind, now) {
     sessionId: replay.text(value.sessionId, 'sessionId', 15, false),
     sessionToken: replay.text(value.sessionToken, 'sessionToken', 64, false),
   };
+  // The build the entry was captured in, empty when it has none, so a credential renewed by another build cannot
+  // relabel it. Kept out when the client sent no field, so an older client's retry still hashes as before.
+  const appVersion = replay.text(value.appVersion, 'appVersion', 64, false);
+  if (value.appVersion !== undefined && value.appVersion !== null) result.appVersion = appVersion;
   if (result.sessionId && !/^[a-z0-9]{15}$/.test(result.sessionId)) replay.fail(400, 'Invalid sessionId');
   if (!!result.sessionId !== !!result.sessionToken || (result.sessionToken && !/^[A-Za-z0-9]{64}$/.test(result.sessionToken))) replay.fail(400, 'Invalid replay session credentials');
   const level = value.level === undefined ? (kind === 'error' ? 'error' : 'info') : value.level;
@@ -158,7 +165,8 @@ function batch(value, kind, now) {
 // Chrome ("at fn (file:1:2)") and Safari or Firefox ("fn@file:1:2") frames, reduced to function and file.
 // The origin differs between Android and iOS WebViews and the build hash changes with every release,
 // so neither is kept. Line numbers move with any edit, and engines disagree about native frames.
-function frames(stack) {
+// Each of the top frames also keeps its address and 1-based position, for source maps to resolve.
+function stackFrames(stack) {
   const result = [];
   stack.split('\n').forEach(function (raw) {
     const line = raw.trim();
@@ -170,20 +178,47 @@ function frames(stack) {
     else if ((match = /^([^@:]*)@(\S+)$/.exec(line))) { fn = match[1]; file = match[2]; }
     else return;
     if (/^(?:native|<anonymous>|\[native code\])$/.test(file)) return;
-    file = file.replace(/:\d+(?::\d+)?$/, '').replace(/^[a-z][a-z0-9+.-]*:\/\/[^/]*/i, '').replace(/[?#].*$/, '')
+    const position = /:(\d+)(?::(\d+))?$/.exec(file);
+    const url = file.replace(/:\d+(?::\d+)?$/, '');
+    file = url.replace(/^[a-z][a-z0-9+.-]*:\/\/[^/]*/i, '').replace(/[?#].*$/, '')
       .replace(/-[A-Za-z0-9_-]{8}(?=\.m?js$)/, '').replace(/\.[0-9a-f]{8,}(?=(?:\.chunk)?\.m?js$)/i, '');
     fn = fn.replace(/^(?:async |new )+/, '').replace(/^.*\./, '');
     // One- and two-letter names are a minifier's, and they change between builds.
     if (fn.length <= 2 || /^(?:<anonymous>|anonymous|global code|eval code|module code)$/.test(fn)) fn = '?';
-    result.push(fn + '@' + file);
+    result.push({ key: fn + '@' + file, url: url, line: position ? Number(position[1]) : 0, column: position && position[2] ? Number(position[2]) : 0 });
   });
   return result.slice(0, 5);
 }
 
-function fingerprint(value, hash) {
+function frames(stack) {
+  return stackFrames(stack).map(function (frame) { return frame.key; });
+}
+
+// An original source path as a grouping key: without a bundler scheme such as webpack://, "." segments,
+// leading ".." segments or a query, so the key survives a moved build folder and Vue's "?vue&type=" parts.
+function sourceKey(path) {
+  const parts = [];
+  String(path).replace(/\\/g, '/').replace(/[?#].*$/, '').replace(/^[a-z][a-z0-9+.-]*:\/\//i, '').split('/').forEach(function (part) {
+    if (!part || part === '.') return;
+    if (part === '..') { parts.pop(); return; }
+    parts.push(part);
+  });
+  return parts.join('/');
+}
+
+// `mapped` optionally lists the source map result for each of the top frames: { source, name } or null.
+function fingerprint(value, hash, mapped) {
   const groupingKey = value.attributes && value.attributes.groupingKey;
   if (typeof groupingKey === 'string' && groupingKey.trim()) return hash(JSON.stringify([value.service, 'groupingKey', groupingKey.trim()]));
-  const top = frames(value.stack);
+  let top = frames(value.stack);
+  // A frame a source map resolves is keyed by its original identifier and source file instead. Neither
+  // moves between releases, so its issue stays together across builds; line numbers are still left out.
+  if (Array.isArray(mapped) && top.some(function (key, index) { return mapped[index] && mapped[index].source; })) {
+    top = top.map(function (key, index) {
+      const frame = mapped[index];
+      return frame && frame.source ? (frame.name || '?') + '@' + sourceKey(frame.source) : key;
+    });
+  }
   // Minified frames all read "?@index.js" and cannot tell two errors apart, so the message decides instead.
   const named = top.filter(function (frame) { return frame.charAt(0) !== '?'; }).length;
   const message = named >= 2 ? '' : value.message
@@ -194,6 +229,6 @@ function fingerprint(value, hash) {
 }
 
 module.exports = {
-  LIMITS: LIMITS, DEFAULTS: DEFAULTS, LEVELS: LEVELS, settings: settings, webhook: webhook, bytes: bytes, redact: redact,
-  label: label, event: event, batch: batch, frames: frames, fingerprint: fingerprint,
+  LIMITS: LIMITS, DEFAULTS: DEFAULTS, LEVELS: LEVELS, PRIVATE_KEY: PRIVATE_KEY, settings: settings, webhook: webhook, bytes: bytes, redact: redact,
+  label: label, event: event, batch: batch, frames: frames, stackFrames: stackFrames, sourceKey: sourceKey, fingerprint: fingerprint,
 };

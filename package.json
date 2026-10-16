@@ -43,7 +43,8 @@
     "LICENSE",
     "examples",
     "plugins/README.md",
-    "plugins/capacitor/README.md"
+    "plugins/capacitor/README.md",
+    "plugins/flutter/README.md"
   ],
   "scripts": {
     "build:viewer": "node scripts/build-viewer.mjs",
@@ -67,7 +68,8 @@
   },
   "bin": {
     "pb-replay-install": "./scripts/install.mjs",
-    "pb-replay-assets": "./scripts/archive-assets.mjs"
+    "pb-replay-assets": "./scripts/archive-assets.mjs",
+    "pb-replay-sourcemaps": "./scripts/upload-sourcemaps.mjs"
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts"

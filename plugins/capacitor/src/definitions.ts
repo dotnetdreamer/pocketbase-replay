@@ -38,6 +38,13 @@ export interface PocketBaseReplayPlugin {
    */
   getMetrics(): Promise<GetMetricsResult>;
 
+  /**
+   * Mark this moment, such as a bug report. When the server records only when something breaks, upload what
+   * the device kept and keep recording for a minute. Resolves with the recording's ID, or `null` when nothing
+   * is recorded or its session could not start yet.
+   */
+  trigger(options?: TriggerOptions): Promise<TriggerResult>;
+
   /** Start JavaScript error and log capture independently of recording. A later replay-only `start` leaves it running. */
   startObservability(options: ObservabilityOptions): Promise<void>;
   /** Stop error and log capture and release its listeners. */
@@ -51,6 +58,8 @@ export type StartOptions = ReplayOptions & Pick<ObservabilityOptions, 'errors' |
 export interface CaptureExceptionOptions extends ExceptionContext { error: unknown }
 export interface CaptureLogOptions { level: LogLevel; message: string; attributes?: ObservabilityAttributes }
 export interface CaptureResult { id: string | null }
+export interface TriggerOptions { reason?: string }
+export interface TriggerResult { sessionId: string | null }
 export interface GetObservabilityMetricsResult { metrics: ObservabilityMetrics | null }
 
 export interface GetMetricsResult {

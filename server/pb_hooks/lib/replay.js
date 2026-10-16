@@ -12,8 +12,11 @@ function readBody(e) {
   }
 }
 
+const SETTING_KEYS = Object.keys(core.DEFAULTS);
+const SETTINGS_FILTER = SETTING_KEYS.map(function (key) { return "key = '" + key + "'"; }).join(' || ');
+
 function config(app) {
-  const rows = app.findRecordsByFilter('replay_settings', "key = 'mode' || key = 'percentage' || key = 'account_ids' || key = 'retention_days' || key = 'daily_limit_mb' || key = 'mask_selector' || key = 'block_selector' || key = 'record_images'", '', 8, 0);
+  const rows = app.findRecordsByFilter('replay_settings', SETTINGS_FILTER, '', SETTING_KEYS.length, 0);
   const result = {};
   let valid = true;
   for (const key of Object.keys(core.DEFAULTS)) result[key] = core.DEFAULTS[key];
@@ -33,7 +36,9 @@ function config(app) {
     for (const key of ['mask_selector', 'block_selector']) {
       try { fallback[key] = core.selector(result[key], key); } catch (_) { /* An unreadable rule stays empty. */ }
     }
-    fallback.record_images = result.record_images === true;
+    for (const key of ['record_images', 'record_network', 'record_console']) fallback[key] = result[key] === true;
+    fallback.record_pocketbase = result.record_pocketbase !== false;
+    fallback.upload_mode = result.upload_mode === 'trigger' ? 'trigger' : 'session';
     return fallback;
   }
 }
@@ -164,6 +169,19 @@ function selected(cfg, identity) {
   return core.enabled(cfg, identity, function (value) { return $security.sha256(value); });
 }
 
+// Trigger mode needs a client that keeps its recording on the device; an older one would upload whole sessions.
+function capable(cfg, body) {
+  return cfg.upload_mode !== 'trigger' || core.supports(body, 'trigger');
+}
+
+function answer(cfg) {
+  return {
+    maskTextSelector: cfg.mask_selector, blockSelector: cfg.block_selector, recordImages: cfg.record_images,
+    recordNetwork: cfg.record_network, recordConsole: cfg.record_console, uploadMode: cfg.upload_mode, recordPocketbase: cfg.record_pocketbase,
+    tracePocketbaseRequests: /^(?:on|true|1|yes)$/i.test(($os.getenv('REPLAY_TRACE_REQUESTS') || '').trim()),
+  };
+}
+
 function erasedKey(accountId) { return 'erase:' + $security.sha256(accountId).slice(0, 58); }
 
 function isForgotten(app, accountId) {
@@ -212,11 +230,16 @@ function publicConfig(e) {
   }
   const cfg = config(e.app);
   // A claim that cannot be selected needs no verification; lying only opts a client out.
-  if (!selected(cfg, meta)) return { enabled: false, uploadIntervalMs: core.LIMITS.uploadIntervalMs };
+  if (!selected(cfg, meta) || !capable(cfg, body)) return { enabled: false, uploadIntervalMs: core.LIMITS.uploadIntervalMs };
   if (!admission.requireAccount) meta.accountId = account(e.app, meta);
   security.check(e.app, body, meta.accountId);
   if (!selected(cfg, meta) || isForgotten(e.app, meta.accountId)) return { enabled: false, uploadIntervalMs: core.LIMITS.uploadIntervalMs };
-  return { enabled: true, uploadIntervalMs: core.LIMITS.uploadIntervalMs, maskTextSelector: cfg.mask_selector, blockSelector: cfg.block_selector, recordImages: cfg.record_images };
+  return Object.assign({ enabled: true, uploadIntervalMs: core.LIMITS.uploadIntervalMs }, answer(cfg));
+}
+
+// In trigger mode a session starts only when something broke on the device, and says what.
+function startable(cfg, body, trigger) {
+  return capable(cfg, body) && (cfg.upload_mode !== 'trigger' || !!trigger);
 }
 
 function start(e) {
@@ -229,8 +252,9 @@ function start(e) {
     meta.accountId = account(e.app, meta);
     security.requireAccount(admission, meta.accountId);
   }
+  const trigger = core.reason(body.trigger);
   let cfg = config(e.app);
-  if (!selected(cfg, meta)) return { enabled: false };
+  if (!selected(cfg, meta) || !startable(cfg, body, trigger)) return { enabled: false };
   if (!admission.requireAccount) meta.accountId = account(e.app, meta);
   if (!selected(cfg, meta)) return { enabled: false };
   const now = Date.now();
@@ -241,7 +265,7 @@ function start(e) {
     security.check(tx, body, meta.accountId);
     const currentLimits = limits.replayConfig(tx, true);
     cfg = config(tx);
-    if (!selected(cfg, meta) || isForgotten(tx, meta.accountId)) core.fail(403, 'Replay is disabled');
+    if (!selected(cfg, meta) || !startable(cfg, body, trigger) || isForgotten(tx, meta.accountId)) core.fail(403, 'Replay is disabled');
     const since = now - 60 * 60 * 1000;
     const params = { since: since, device: meta.deviceId, ip: ipHash };
     if (count(tx, 'replay_sessions', 'deviceId = {:device} AND startedAt > {:since}', params) >= currentLimits.sessions_per_device_hour ||
@@ -250,6 +274,7 @@ function start(e) {
     session = new Record(tx.findCollectionByNameOrId('replay_sessions'));
     for (const key of ['deviceId', 'accountId', 'platform', 'appVersion', 'room']) session.set(key, meta[key]);
     session.set('rooms', meta.room ? '|' + meta.room + '|' : '');
+    if (trigger) session.set('trigger', trigger);
     session.set('tokenHash', $security.sha256(token));
     session.set('ipHash', ipHash);
     session.set('startedAt', now);
@@ -257,10 +282,9 @@ function start(e) {
     session.set('expiresAt', now + core.LIMITS.sessionMs);
     tx.save(session);
   });
-  return {
+  return Object.assign({
     enabled: true, sessionId: session.id, token: token, expiresAt: now + core.LIMITS.sessionMs, expiresIn: core.LIMITS.sessionMs, uploadIntervalMs: core.LIMITS.uploadIntervalMs,
-    maskTextSelector: cfg.mask_selector, blockSelector: cfg.block_selector, recordImages: cfg.record_images,
-  };
+  }, answer(cfg));
 }
 
 function upload(e) {
@@ -279,6 +303,8 @@ function upload(e) {
     if (session.getFloat('expiresAt') <= Date.now()) core.fail(410, 'Replay session expired');
     const cfg = config(tx);
     if (!selected(cfg, { accountId: session.getString('accountId'), deviceId: session.getString('deviceId'), platform: session.getString('platform'), appVersion: session.getString('appVersion') }) || isForgotten(tx, session.getString('accountId'))) core.fail(403, 'Replay is disabled');
+    // A whole-session recording still running when trigger mode is turned on stops here, at once.
+    if (cfg.upload_mode === 'trigger' && !session.getString('trigger')) core.fail(403, 'Replay is disabled');
     const duplicates = tx.findRecordsByFilter('replay_chunks', 'session = {:id} && seq = {:seq}', '', 1, 0, { id: session.id, seq: value.seq });
     if (duplicates.length) {
       const old = duplicates[0];
@@ -330,7 +356,7 @@ function saveSettings(e) {
   const body = readBody(e);
   // An older dashboard leaves these out; they keep their stored values.
   let stored = null;
-  for (const key of ['daily_limit_mb', 'mask_selector', 'block_selector', 'record_images']) {
+  for (const key of ['daily_limit_mb', 'mask_selector', 'block_selector', 'record_images', 'record_network', 'record_console', 'upload_mode', 'record_pocketbase']) {
     if (body[key] !== undefined) continue;
     stored = stored || config(e.app);
     body[key] = stored[key];
@@ -352,7 +378,7 @@ function saveSettings(e) {
 
 function summary(row) {
   const result = { id: row.id, sessionId: row.id };
-  for (const key of ['deviceId', 'accountId', 'platform', 'appVersion', 'room']) result[key] = row.getString(key);
+  for (const key of ['deviceId', 'accountId', 'platform', 'appVersion', 'room', 'trigger']) result[key] = row.getString(key);
   for (const key of ['startedAt', 'endedAt', 'lastSeenAt', 'expiresAt', 'compressedBytes', 'rawBytes', 'chunkCount', 'eventCount']) result[key] = row.getFloat(key);
   result.rooms = row.getString('rooms').split('|').filter(Boolean);
   return result;

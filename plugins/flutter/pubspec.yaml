@@ -1,0 +1,27 @@
+name: pocketbase_replay_flutter
+description: Session replay, error tracking and logs for Flutter apps, sent to a self-hosted PocketBase Replay server.
+version: 0.1.0
+homepage: https://github.com/dotnetdreamer/pocketbase-replay/tree/main/plugins/flutter
+repository: https://github.com/dotnetdreamer/pocketbase-replay
+issue_tracker: https://github.com/dotnetdreamer/pocketbase-replay/issues
+topics:
+  - pocketbase
+  - session-replay
+  - error-tracking
+  - logging
+
+environment:
+  sdk: ">=3.5.0 <4.0.0"
+  flutter: ">=3.24.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  http: ">=1.5.0 <2.0.0"
+
+dev_dependencies:
+  flutter_lints: ^5.0.0
+  flutter_test:
+    sdk: flutter
+  # Only to test ReplayPocketBaseClient against the real SDK; apps bring their own.
+  pocketbase: ^0.25.0

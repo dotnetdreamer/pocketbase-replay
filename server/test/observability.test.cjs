@@ -235,6 +235,22 @@ test('session links need the recording secret, a failed link keeps the entry, an
   f.close();
 });
 
+test('a recording\'s errors list across issues with their stacks, for the player\'s activity panel', () => {
+  const f = fixture(); f.enable(); const token = f.token();
+  const row = new Record(f.app.findCollectionByNameOrId('replay_sessions'));
+  row.set('accountId', 'alice'); row.set('deviceId', 'device'); row.set('tokenHash', hash('s'.repeat(64))); row.set('chunkCount', 1); f.app.save(row);
+  const link = { sessionId: row.id, sessionToken: 's'.repeat(64) };
+  observability.errors(f.event({ token, events: [
+    exception('first', link), { ...exception('second', link), name: 'RangeError', message: 'Different issue' }, exception('elsewhere'),
+  ] }));
+  const listed = observability.errorList(f.event({}, { sessionId: row.id }));
+  assert.equal(listed.totalItems, 2);
+  assert.equal(new Set(listed.items.map(item => item.issueId)).size, 2);
+  assert.ok(listed.items.every(item => item.sessionId === row.id && typeof item.stack === 'string' && item.replayAvailable === true));
+  assert.equal(observability.errorList(f.event()).totalItems, 3);
+  f.close();
+});
+
 test('account erasure preserves other accounts and replaces summaries that came from deleted events', () => {
   const f = fixture(); f.enable(); const alice = f.token();
   const bob = observability.publicConfig(f.event({ deviceId: 'bob-device', platform: 'web' })).token;
@@ -387,7 +403,7 @@ test('per-IP request limits and per-device context creation stay bounded, and a 
 });
 
 test('all observability read and management routes require superuser authentication before touching data', () => {
-  for (const name of ['getSettings', 'saveSettings', 'issues', 'issue', 'updateIssue', 'removeIssue', 'logs', 'log', 'volume', 'removeLog', 'alerts', 'acknowledge', 'removeAlert', 'testAlert']) {
+  for (const name of ['getSettings', 'saveSettings', 'issues', 'issue', 'updateIssue', 'removeIssue', 'errorList', 'logs', 'log', 'volume', 'removeLog', 'alerts', 'acknowledge', 'removeAlert', 'testAlert']) {
     assert.throws(() => observability[name]({ hasSuperuserAuth: () => false }), { status: 401 }, name);
     assert.throws(() => observability[name]({ hasSuperuserAuth: () => false, auth: { id: 'user' } }), { status: 403 }, name);
   }
@@ -399,15 +415,20 @@ test('migration keeps collections private and hook wiring caps ingest bodies', (
     const collection = f.collections.get(name);
     for (const key of ['listRule', 'viewRule', 'createRule', 'updateRule', 'deleteRule']) assert.equal(collection[key], null);
   }
-  const routes = []; const crons = [];
+  const routes = []; const crons = []; const settingsHooks = [];
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../pb_hooks/710_observability.pb.js'), 'utf8'), {
     routerAdd: (method, route, handler, limit) => routes.push({ method, route, handler, limit }),
     cronAdd: (name, schedule) => crons.push({ name, schedule }), $apis: { bodyLimit: value => value },
+    onRecordAfterCreateSuccess: (handler, tag) => settingsHooks.push({ handler, tag }),
+    onRecordAfterUpdateSuccess: (handler, tag) => settingsHooks.push({ handler, tag }),
   });
   for (const route of ['/api/replay/errors', '/api/replay/logs']) assert.equal(routes.find(row => row.route === route && row.method === 'POST').limit, 65536);
   for (const route of ['/api/replay/logs/volume', '/api/replay/alerts/test']) assert.ok(routes.some(row => row.route === route), route);
+  assert.ok(routes.some(row => row.route === '/api/replay/errors' && row.method === 'GET'));
   for (const route of routes) assert.match(route.handler.toString(), /require\(`\$\{__hooks\}\/lib\/observability\.js`\)/);
   assert.equal(crons[0].schedule, '* * * * *');
+  assert.equal(settingsHooks.length, 2);
+  assert.ok(settingsHooks.every(hook => hook.tag === 'replay_settings' && hook.handler.toString().includes('settingsChanged')));
   f.close();
 });
 

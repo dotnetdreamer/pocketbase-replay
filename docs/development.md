@@ -84,6 +84,33 @@ Use `--keep-open` to inspect the test app before Ctrl+C cleans it up. The
 runner accepts only loopback HTTP fixtures. Native process crashes and
 system logs remain outside these APIs
 
+## Flutter plugin checks
+
+The [Flutter plugin](../plugins/flutter/README.md) has its own checks and CI
+workflow. With Flutter 3.24 or newer:
+
+```sh
+cd plugins/flutter
+flutter pub get
+flutter analyze
+flutter test
+```
+
+They cover the upload protocol, trigger mode, retries, errors and logs,
+redaction, PocketBase calls through the real Dart SDK, and screen capture,
+masking and tap naming with real frames, including transformed masks, visible
+text overflow and pointer privacy. `test/server_test.dart` also runs the
+plugin against a replay server and reads back what it stored; it changes that
+server's settings, so point it at a throwaway one:
+
+```sh
+REPLAY_TEST_ENDPOINT=http://127.0.0.1:8090 REPLAY_TEST_EMAIL=you@example.com REPLAY_TEST_PASSWORD=... \
+  flutter test test/server_test.dart
+```
+
+CI runs it against PocketBase 0.39.9 with this repository's hooks, so a server
+change that breaks the plugin's requests fails there
+
 ## Performance checks
 
 Measure frame times, CPU and bytes per minute in the integrating app on its own
@@ -95,7 +122,8 @@ some of rrweb's mutation observer work and is not a total CPU measurement
 ## Release
 
 The root package is published as `pocketbase-replay` on the public npm registry.
-The Capacitor plugin has its own package in `plugins/capacitor`
+The Capacitor plugin has its own package in `plugins/capacitor`, and the Flutter
+plugin its Dart package, `pocketbase_replay_flutter`, in `plugins/flutter`
 
 For a release, update the root version and lockfile together, then run the
 local checks and PocketBase integration check above. The first npm release

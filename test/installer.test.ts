@@ -30,6 +30,8 @@ test('installer preserves unrelated hooks, migrations, and PocketBase data', asy
     assert.equal(first.status, 0, first.stderr || String(first.error));
     for (const path of files) assert.equal(await readFile(join(root, path), 'utf8'), `keep ${path}`);
     assert.ok((await readFile(join(root, 'pb_hooks/700_replay.pb.js'), 'utf8')).includes('/api/replay/start'));
+    assert.ok((await readFile(join(root, 'pb_hooks/720_pocketbase.pb.js'), 'utf8')).includes('/api/replay/requests'));
+    for (const path of ['pb_hooks/lib/pocketbase.js', 'pb_hooks/lib/pocketbase-core.js']) assert.ok((await readFile(join(root, path), 'utf8')).length > 0, path);
     const second = install(root);
     assert.equal(second.status, 0, second.stderr || String(second.error));
     assert.match(second.stdout, /Installed 0 replay files/);

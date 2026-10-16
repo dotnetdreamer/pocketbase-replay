@@ -136,6 +136,34 @@ test('finishes a seek when an earlier event or the flush throws', () => {
   assert.equal(errors.length, 3);
 });
 
+test('a paused seek to zero restores the initial snapshot instead of retaining a later screen', () => {
+  // rrweb 2.1.6 casts events before baseline synchronously and queues equal/later timestamps. pause(offset)
+  // immediately clears those queued events. Flutter's meta and full snapshot share the first timestamp.
+  const events = [
+    { timestamp: 1000, screen: 'Home' },
+    { timestamp: 1001, screen: 'First change' },
+    { timestamp: 9000, screen: 'Checkout' },
+  ];
+  let screen = 'Checkout';
+  const offsets: (number | undefined)[] = [];
+  const replayer = {
+    pause(timeOffset?: number) {
+      offsets.push(timeOffset);
+      if (timeOffset === undefined) return;
+      for (const event of events) {
+        if (event.timestamp < events[0].timestamp + timeOffset) screen = event.screen;
+      }
+    },
+  };
+  keepPlaying(replayer, () => assert.fail('no error expected'));
+  replayer.pause(0);
+  assert.equal(screen, 'Home');
+  replayer.pause(9001);
+  assert.equal(screen, 'Checkout');
+  replayer.pause();
+  assert.deepEqual(offsets, [1, 9001, undefined]);
+});
+
 test('never keeps a text node as the hover root', () => {
   const removed: string[] = [];
   const document = { nodeType: 9, querySelectorAll: () => [{ classList: { remove: (name: string) => removed.push(name) } }] };

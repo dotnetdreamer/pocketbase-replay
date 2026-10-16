@@ -7,7 +7,7 @@ import { subscribeCapture } from './observability-capture';
 import type { ObservabilityController, ObservabilityOptions, ObservabilityStorage } from './observability-types.js';
 import type { ReplayController, ReplayOptions, ReplayTransport } from './types.js';
 
-export type { ReplayController, ReplayOptions, ReplayMetadata, ReplayMetrics, ReplayTransport, ReplaySessionContext } from './types.js';
+export type { PocketBaseClient, ReplayController, ReplayOptions, ReplayMetadata, ReplayMetrics, ReplayTransport, ReplaySessionContext } from './types.js';
 export type {
   CapturedException, CapturedLog, ErrorTrackingOptions, ExceptionContext, LogCaptureOptions, LogLevel,
   ObservabilityAttributes, ObservabilityController, ObservabilityEvent, ObservabilityMetrics, ObservabilityOptions,
@@ -126,6 +126,17 @@ export function startReplay(options: ReplayOptions): ReplayController {
     },
     validSelector: (selector) => {
       try { document.createElement('div').matches(selector); return true; } catch { return false; }
+    },
+    subscribeErrors: (listener) => {
+      if (typeof window === 'undefined') return () => {};
+      const targetWindow = window;
+      const failed = () => { try { listener(); } catch { /* Recording stays optional. */ } };
+      targetWindow.addEventListener('error', failed);
+      targetWindow.addEventListener('unhandledrejection', failed);
+      return () => {
+        try { targetWindow.removeEventListener('error', failed); } catch { /* Cleanup must not reach the app. */ }
+        try { targetWindow.removeEventListener('unhandledrejection', failed); } catch { /* Cleanup must not reach the app. */ }
+      };
     },
   });
 }

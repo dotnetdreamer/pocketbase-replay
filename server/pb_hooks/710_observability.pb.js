@@ -18,6 +18,10 @@ routerAdd('POST', '/api/replay/logs', (e) => {
   return require(`${__hooks}/lib/observability.js`).route(e, 'logsUpload');
 }, $apis.bodyLimit(65536));
 
+routerAdd('GET', '/api/replay/errors', (e) => {
+  return require(`${__hooks}/lib/observability.js`).route(e, 'errorList');
+});
+
 routerAdd('GET', '/api/replay/issues', (e) => {
   return require(`${__hooks}/lib/observability.js`).route(e, 'issues');
 });
@@ -65,6 +69,14 @@ routerAdd('POST', '/api/replay/alerts/{id}/acknowledge', (e) => {
 routerAdd('DELETE', '/api/replay/alerts/{id}', (e) => {
   return require(`${__hooks}/lib/observability.js`).route(e, 'removeAlert');
 });
+
+// Direct superuser edits to the settings record have the same capture boundaries as the replay dashboard.
+for (const name of ['onRecordAfterCreateSuccess', 'onRecordAfterUpdateSuccess']) {
+  globalThis[name]((e) => {
+    if (e.record.getString('key') === 'observability') require(`${__hooks}/lib/observability.js`).settingsChanged(e.app);
+    return e.next();
+  }, 'replay_settings');
+}
 
 cronAdd('pocketbase_replay_observability_retention', '* * * * *', () => {
   require(`${__hooks}/lib/observability.js`).sweep($app);

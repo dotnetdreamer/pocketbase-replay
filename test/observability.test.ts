@@ -3,7 +3,7 @@ import { createRequire } from 'node:module';
 import { test } from 'node:test';
 import { ReplayHttpError } from '../src/errors';
 import { createObservability, OBSERVABILITY_LIMITS } from '../src/observability';
-import type { ObservabilityOptions, ObservabilityRuntime } from '../src/observability-types';
+import type { ObservabilityEvent, ObservabilityOptions, ObservabilityRuntime } from '../src/observability-types';
 import type { ReplayMetadata } from '../src/types';
 
 const token = 't'.repeat(64), replayToken = 's'.repeat(64), sessionId = 'session00000001';
@@ -444,4 +444,142 @@ test('with the server unreachable, a stream of entries asks for a credential at 
   await f.advance(10000); await drain(); await client.flush();
   assert.equal(client.getMetrics().queuedEvents, 0); assert.equal(client.getMetrics().uploadedEvents, 100);
   client.stop();
+});
+
+test('an error captured while a replay keeps its recording triggers it and links once that session starts', async () => {
+  let context: { sessionId: string; token: string } | null = null;
+  const triggers: (string | undefined)[] = [];
+  const started = deferred<{ sessionId: string; token: string } | null>();
+  const f = fixture({ replay: { getSessionContext: () => context, trigger: (reason) => { triggers.push(reason); return started.promise; } } });
+  const client = createObservability(f.options, f.runtime);
+  try {
+    await client.refresh();
+    client.captureException(new Error('payment failed'));
+    await client.flush();
+    assert.deepEqual(triggers, ['error']);
+    assert.equal(f.posts.some((post) => post.url.endsWith('/errors')), false);
+    context = { sessionId, token: replayToken };
+    started.resolve(context);
+    await drain();
+    const sent = f.posts.find((post) => post.url.endsWith('/errors'))!.body.events[0];
+    assert.equal(sent.message, 'payment failed');
+    assert.equal(sent.sessionId, sessionId);
+    assert.equal(sent.sessionToken, replayToken);
+    assert.doesNotThrow(() => server.batch({ token, events: [sent] }, 'error', f.now()));
+    client.captureException(new Error('while the recording is live'));
+    await client.flush();
+    assert.deepEqual(triggers, ['error']);
+  } finally { client.stop(); }
+});
+
+test('a held error goes without its replay link when the trigger starts no session in time', async () => {
+  const beacons: Record<string, any>[] = [];
+  const f = fixture({ replay: { getSessionContext: () => null, trigger: () => new Promise(() => {}) } });
+  const client = createObservability(f.options, f.runtime);
+  try {
+    await client.refresh();
+    client.captureException(new Error('replay unreachable'));
+    client.captureLog('info', 'logs are never held');
+    await client.flush();
+    assert.ok(f.posts.some((post) => post.url.endsWith('/logs')));
+    assert.equal(f.posts.some((post) => post.url.endsWith('/errors')), false);
+    await f.advance(OBSERVABILITY_LIMITS.linkWaitMs);
+    const sent = f.posts.find((post) => post.url.endsWith('/errors'))!.body.events[0];
+    assert.equal(sent.message, 'replay unreachable');
+    assert.equal('sessionId' in sent, false);
+    f.options.transport!.beacon = (_url, raw) => { beacons.push(JSON.parse(raw)); return true; };
+    client.captureException(new Error('leaving with the page'));
+    client.stop();
+    assert.equal(beacons[0].events[0].message, 'leaving with the page');
+  } finally { client.stop(); }
+});
+
+test('a replay without trigger support, or a thrown trigger, never holds an error back', async () => {
+  for (const replay of [{ getSessionContext: () => null }, { getSessionContext: () => null, trigger: () => { throw new Error('broken'); } }]) {
+    const f = fixture({ replay });
+    const client = createObservability(f.options, f.runtime);
+    try {
+      await client.refresh();
+      client.captureException(new Error('sent at once'));
+      await client.flush();
+      assert.equal(f.posts.find((post) => post.url.endsWith('/errors'))!.body.events[0].message, 'sent at once');
+    } finally { client.stop(); }
+  }
+});
+
+test('an error that beforeSend drops never triggers the replay', async () => {
+  const triggers: (string | undefined)[] = [];
+  const f = fixture({
+    replay: { getSessionContext: () => null, trigger: (reason) => { triggers.push(reason); return Promise.resolve(null); } },
+    beforeSend: (event) => event.kind === 'error' && event.message.includes('noise') ? null : event,
+  });
+  const client = createObservability(f.options, f.runtime);
+  try {
+    await client.refresh();
+    assert.equal(client.captureException(new Error('known noise')), null);
+    assert.deepEqual(triggers, []);
+    assert.equal(typeof client.captureException(new Error('real failure')), 'string');
+    assert.deepEqual(triggers, ['error']);
+  } finally { client.stop(); }
+});
+
+test('every error of a burst that fills a batch waits for its replay link', async () => {
+  let context: { sessionId: string; token: string } | null = null;
+  const started = deferred<{ sessionId: string; token: string } | null>();
+  const f = fixture({ replay: { getSessionContext: () => context, trigger: () => started.promise } });
+  const client = createObservability(f.options, f.runtime);
+  try {
+    await client.refresh();
+    const ids = Array.from({ length: enabledConfig.maxBatchEvents }, (_, index) => client.captureException(new Error(`burst ${index}`)));
+    assert.ok(ids.every((id) => typeof id === 'string'));
+    await drain();
+    assert.equal(f.posts.some((post) => post.url.endsWith('/errors')), false);
+    context = { sessionId, token: replayToken };
+    started.resolve(context);
+    await drain(); await client.flush(); await drain();
+    const sent = f.posts.filter((post) => post.url.endsWith('/errors')).flatMap((post) => post.body.events);
+    assert.deepEqual(sent.map((event: { message: string }) => event.message).sort(), ids.map((_, index) => `burst ${index}`).sort());
+    assert.ok(sent.every((event: { sessionId?: string }) => event.sessionId === sessionId));
+  } finally { client.stop(); }
+});
+
+test('beforeSend cannot drop or change the build an entry was captured in, and a build without one sends it empty', async () => {
+  // Written before entries carried a build, this callback rebuilds every field it knows and leaves the build out.
+  const rebuild = (event: ObservabilityEvent): ObservabilityEvent => event.kind === 'error'
+    ? { id: event.id, timestamp: event.timestamp, kind: event.kind, service: event.service, name: event.name, message: event.message,
+      stack: event.stack, handled: event.handled, level: event.level, attributes: event.attributes }
+    : { ...event, appVersion: 'relabelled' };
+  const f = fixture({ beforeSend: rebuild });
+  const client = createObservability(f.options, f.runtime);
+  try {
+    await client.refresh();
+    f.setMetadata({ deviceId: 'device-one', platform: 'web', appVersion: '1.0', room: 'ROOM' });
+    client.captureException(new Error('rebuilt by the app'));
+    client.captureLog('info', 'relabelled by the app');
+    f.setMetadata({ deviceId: 'device-one', platform: 'web', appVersion: '', room: 'ROOM' });
+    client.captureException(new Error('from a build without a version'));
+    await client.flush();
+    const errors = f.posts.find((post) => post.url.endsWith('/errors'))!.body.events;
+    assert.deepEqual(errors.map((event: { appVersion?: string }) => event.appVersion), ['1.0', '']);
+    assert.equal(f.posts.find((post) => post.url.endsWith('/logs'))!.body.events[0].appVersion, '1.0');
+    for (const event of errors) assert.equal(server.event(event, 'error', f.now()).appVersion, event.appVersion);
+  } finally { client.stop(); }
+});
+
+test('each entry carries the build it was captured in, even after the app reports a newer one', async () => {
+  const f = fixture();
+  const client = createObservability(f.options, f.runtime);
+  try {
+    await client.refresh();
+    f.setMetadata({ deviceId: 'device-one', platform: 'web', appVersion: '1.0', room: 'ROOM' });
+    client.captureException(new Error('from the old build'));
+    f.setMetadata({ deviceId: 'device-one', platform: 'web', appVersion: '1.1', room: 'ROOM' });
+    client.captureException(new Error('from the new build'));
+    client.captureLog('info', 'logged by the new build');
+    await client.flush();
+    const errors = f.posts.find((post) => post.url.endsWith('/errors'))!.body.events;
+    assert.deepEqual(errors.map((event: { appVersion: string }) => event.appVersion), ['1.0', '1.1']);
+    assert.equal(f.posts.find((post) => post.url.endsWith('/logs'))!.body.events[0].appVersion, '1.1');
+    for (const event of errors) assert.equal(server.event(event, 'error', f.now()).appVersion, event.appVersion);
+  } finally { client.stop(); }
 });

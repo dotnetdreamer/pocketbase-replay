@@ -3,6 +3,10 @@ const core = require('./observability-core.js');
 const replay = require('./replay.js');
 const security = require('./ingestion-security.js');
 
+const SERVER_DEVICE = 'pocketbase';
+const LOG_CURSOR = 'observability:log-cursor';
+const LOG_CAPTURE = 'observability:log-capture';
+const SERVER_ERRORS_PER_MINUTE = 120;
 const VOLUME_STEPS = [60000, 300000, 900000, 1800000, 3600000, 10800000, 21600000, 43200000, 86400000, 604800000];
 
 function readBody(e) {
@@ -28,6 +32,7 @@ function config(app) {
       try { fallback[key] = core.settings(Object.assign({}, core.DEFAULTS, { [key]: value[key] }))[key]; } catch (_) {}
     }
     try { fallback.alert_webhook_url = core.webhook(value.alert_webhook_url); } catch (_) {}
+    if (typeof value.server_errors === 'boolean') fallback.server_errors = value.server_errors;
     return fallback;
   }
 }
@@ -122,13 +127,63 @@ function cachedConfig(app) {
 
 function getSettings(e) { admin(e); return config(e.app); }
 
+// Persist capture boundaries with settings, before a delayed log batch or the next minute sweep can arrive.
+// Closed intervals are kept until the scan passes them, so toggling capture does not lose pending enabled rows.
+function capturePeriods(app, cfg, now) {
+  let row;
+  let periods;
+  let known = true;
+  try {
+    row = app.findFirstRecordByData('replay_settings', 'key', LOG_CAPTURE);
+    periods = JSON.parse(row.getString('value'));
+  } catch (_) {}
+  if (!Array.isArray(periods) || periods.some(function (p) {
+    return !Array.isArray(p) || !Number.isSafeInteger(p[0]) || (p[1] !== null && !Number.isSafeInteger(p[1]));
+  })) {
+    known = false;
+    // Upgrade existing enabled installations with a small lookback. New enables set their exact start below.
+    periods = cfg.errors_enabled && cfg.server_errors ? [[now - 5 * 60000, null]] : [];
+  }
+  function save(value) {
+    if (!row) {
+      row = new Record(app.findCollectionByNameOrId('replay_settings'));
+      row.set('key', LOG_CAPTURE);
+    }
+    row.set('value', JSON.stringify(value));
+    app.save(row);
+  }
+  return { periods: periods, save: save, known: known };
+}
+
+function updateCapture(app, previous, saved, now) {
+  const capture = capturePeriods(app, previous, now);
+  const periods = capture.periods;
+  const enabled = saved.errors_enabled && saved.server_errors;
+  const last = periods[periods.length - 1];
+  if (enabled && (!last || last[1] !== null)) periods.push([now, null]);
+  else if (!enabled && last && last[1] === null) last[1] = now;
+  let scanned = 0;
+  try { scanned = Date.parse(JSON.parse(app.findFirstRecordByData('replay_settings', 'key', LOG_CURSOR).getString('value')).created); } catch (_) {}
+  // A setting toggle cannot grow this bookkeeping without bound. Dropping an old closed interval only skips it.
+  capture.save(periods.filter(function (p) { return p[1] === null || p[1] >= scanned; }).slice(-4096));
+}
+
+// Native model after-save hooks cover direct PocketBase dashboard edits as well as our settings endpoint.
+function settingsChanged(app) {
+  const value = config(app);
+  app.runInTransaction(function (tx) { updateCapture(tx, core.DEFAULTS, value, Date.now()); });
+  app.store().set('observability:settings', JSON.stringify({ at: Date.now(), value: value }));
+}
+
 function saveSettings(e) {
   admin(e);
   const value = readBody(e);
   let saved;
   e.app.runInTransaction(function (tx) {
     // An older dashboard leaves newer keys out; they keep their stored values.
-    saved = core.settings(Object.assign(config(tx), value));
+    const previous = config(tx);
+    saved = core.settings(Object.assign({}, previous, value));
+    updateCapture(tx, previous, saved, Date.now());
     let row;
     try { row = tx.findFirstRecordByData('replay_settings', 'key', 'observability'); } catch (_) {
       row = new Record(tx.findCollectionByNameOrId('replay_settings'));
@@ -155,6 +210,8 @@ function publicConfig(e) {
     enabled: false, errorsEnabled: false, logsEnabled: false,
     uploadIntervalMs: core.LIMITS.uploadIntervalMs, maxBatchEvents: core.LIMITS.batchEvents,
   };
+  // Errors PocketBase reports are stored under this device; no client may write entries that pass for them.
+  if (meta.deviceId === SERVER_DEVICE) return result;
   if (!cfg.errors_enabled && !cfg.logs_enabled) return result;
   if (!admission.requireAccount) meta.accountId = replay.account(e.app, meta);
   if (replay.isForgotten(e.app, meta.accountId)) return result;
@@ -227,6 +284,75 @@ function addAlert(tx, issue, kind, now, cfg) {
   tx.save(row);
 }
 
+// Source maps are their own installable part; without their migration, errors group as they always have.
+function sourcemaps(app) {
+  try { app.findCollectionByNameOrId('replay_sourcemaps'); } catch (_) { return null; }
+  return require('./sourcemaps.js');
+}
+
+// Stores one checked entry: a repeated (deviceId, eventId) is not stored again, an error joins or opens its issue
+// and may alert, and its bytes count against the daily budget. `ready` finishes an entry that is not a repeat.
+// Answers 'duplicate', 'conflict', 'budget' when it would not fit, or the bytes it stored.
+function storeEntry(tx, table, item, who, state, ready) {
+  const cfg = state.cfg;
+  const now = state.now;
+  // Hashed as sent, so a retry still matches after its recording link is dropped.
+  const payloadHash = $security.sha256(JSON.stringify(Object.assign({}, item, { accountId: who.accountId, deviceId: who.deviceId })));
+  const old = tx.findRecordsByFilter(table, 'deviceId = {:device} && eventId = {:id}', '', 1, 0, { device: who.deviceId, id: item.eventId });
+  if (old.length) return $security.equal(old[0].getString('payloadHash'), payloadHash) ? 'duplicate' : 'conflict';
+  if (ready) ready(item);
+  let issue;
+  let alertKind = '';
+  if (table === 'replay_errors') {
+    const resolver = item.stack && state.resolver ? state.resolver(item.appVersion) : null;
+    const mapped = resolver ? resolver.top(core.stackFrames(item.stack)) : undefined;
+    const fingerprint = core.fingerprint(item, function (text) { return $security.sha256(text); }, mapped);
+    const rows = tx.findRecordsByFilter('replay_issues', 'fingerprint = {:fingerprint}', '', 1, 0, { fingerprint: fingerprint });
+    if (rows.length) {
+      issue = rows[0];
+      // An entry from before the fix, delivered late by a device that was offline, is not a regression.
+      if (issue.getString('status') === 'resolved' && item.timestamp > issue.getFloat('resolvedAt')) { issue.set('status', 'open'); alertKind = 'regressed'; }
+    } else {
+      issue = new Record(tx.findCollectionByNameOrId('replay_issues'));
+      issue.set('fingerprint', fingerprint);
+      issue.set('status', 'open');
+      issue.set('firstSeen', item.timestamp);
+      alertKind = 'created';
+    }
+    // The title follows the newest occurrence, so a late older entry leaves it alone.
+    if (alertKind === 'created' || item.timestamp >= issue.getFloat('lastSeen')) {
+      issue.set('name', item.name);
+      issue.set('message', item.message);
+      issue.set('title', item.name + ': ' + item.message);
+      issue.set('service', item.service);
+    }
+    issue.set('level', issue.getString('level') === 'fatal' ? 'fatal' : item.level);
+    issue.set('firstSeen', Math.min(issue.getFloat('firstSeen'), item.timestamp));
+    issue.set('lastSeen', Math.max(issue.getFloat('lastSeen'), item.timestamp));
+    issue.set('lastReceivedAt', now);
+    issue.set('occurrenceCount', issue.getInt('occurrenceCount') + 1);
+  }
+  const alerting = alertKind && cfg.alerts_enabled;
+  const issueBytes = issue ? core.bytes(JSON.stringify(summary(issue, 'issue'))) + 512 : 0;
+  const alertBytes = alerting ? core.bytes(JSON.stringify({ issueId: issue.id, title: issue.getString('title'), kind: alertKind, timestamp: now, acknowledged: false })) + 512 : 0;
+  const bytes = core.bytes(JSON.stringify(Object.assign({}, item, { accountId: who.accountId, deviceId: who.deviceId }))) + 512 + issueBytes + alertBytes;
+  if (state.daily + bytes > cfg.daily_limit_mb * 1024 * 1024) return 'budget';
+  if (issue) {
+    tx.save(issue);
+    if (alerting) addAlert(tx, issue, alertKind, now, cfg);
+  }
+  const row = new Record(tx.findCollectionByNameOrId(table));
+  for (const key of ['accountId', 'deviceId', 'platform', 'appVersion']) row.set(key, who[key]);
+  for (const key of Object.keys(item)) row.set(key, key === 'attributes' ? JSON.stringify(item[key]) : item[key]);
+  row.set('payloadHash', payloadHash);
+  row.set('receivedAt', now);
+  row.set('byteSize', bytes);
+  if (issue) row.set('issue', issue.id);
+  tx.save(row);
+  state.daily += bytes;
+  return bytes;
+}
+
 function ingestion(e, kind) {
   const cfg = cachedConfig(e.app);
   rate(e, kind, cfg.upload_requests_per_ip_minute);
@@ -241,80 +367,43 @@ function ingestion(e, kind) {
   let uploaded = 0;
   let stored = 0;
   const table = kind === 'error' ? 'replay_errors' : 'replay_logs';
+  const maps = kind === 'error' ? sourcemaps(e.app) : null;
   e.app.runInTransaction(function (tx) {
     let context;
     try { context = tx.findFirstRecordByData('replay_observability_sessions', 'tokenHash', $security.sha256(value.token)); } catch (_) { base.fail(401, 'Invalid observability token'); }
     security.check(tx, body, context.getString('accountId'));
     if (context.getFloat('expiresAt') <= now) base.fail(410, 'Observability session expired');
     if (!(kind === 'error' ? cfg.errors_enabled : cfg.logs_enabled) || replay.isForgotten(tx, context.getString('accountId'))) base.fail(403, 'Observability is disabled');
-    const accountId = context.getString('accountId');
-    const deviceId = context.getString('deviceId');
+    const who = {};
+    for (const key of ['accountId', 'deviceId', 'platform', 'appVersion']) who[key] = context.getString(key);
+    // Frames resolve against each entry's own app version, one cached resolver per version in this request.
+    const resolvers = {};
+    function resolverFor(version) {
+      if (!maps || !version) return null;
+      if (!Object.prototype.hasOwnProperty.call(resolvers, version)) resolvers[version] = maps.resolver(tx, version);
+      return resolvers[version];
+    }
     const budget = dailyBytes(tx, Date.now());
-    let daily = budget.bytes;
+    const state = { cfg: cfg, now: now, daily: budget.bytes, resolver: resolverFor };
     value.events.forEach(function (item) {
       const sessionToken = item.sessionToken;
       delete item.sessionToken;
-      // Hashed as sent, so a retry still matches after its recording link is dropped below.
-      const payloadHash = $security.sha256(JSON.stringify(Object.assign({}, item, { accountId: accountId, deviceId: deviceId })));
-      const old = tx.findRecordsByFilter(table, 'deviceId = {:device} && eventId = {:id}', '', 1, 0, { device: deviceId, id: item.eventId });
-      if (old.length) {
-        // A reused ID with different content is skipped and counted, not allowed to sink the rest of the batch.
-        if ($security.equal(old[0].getString('payloadHash'), payloadHash)) duplicates++; else conflicts++;
-        return;
-      }
       const sent = core.bytes(JSON.stringify(item));
-      if (item.sessionId && !linked(tx, context, item.sessionId, sessionToken)) item.sessionId = '';
-      if (!item.room) item.room = core.label(context.getString('room'), 128);
-      let issue;
-      let alertKind = '';
-      if (kind === 'error') {
-        const fingerprint = core.fingerprint(item, function (text) { return $security.sha256(text); });
-        const rows = tx.findRecordsByFilter('replay_issues', 'fingerprint = {:fingerprint}', '', 1, 0, { fingerprint: fingerprint });
-        if (rows.length) {
-          issue = rows[0];
-          // An entry from before the fix, delivered late by a device that was offline, is not a regression.
-          if (issue.getString('status') === 'resolved' && item.timestamp > issue.getFloat('resolvedAt')) { issue.set('status', 'open'); alertKind = 'regressed'; }
-        } else {
-          issue = new Record(tx.findCollectionByNameOrId('replay_issues'));
-          issue.set('fingerprint', fingerprint);
-          issue.set('status', 'open');
-          issue.set('firstSeen', item.timestamp);
-          alertKind = 'created';
-        }
-        // The title follows the newest occurrence, so a late older entry leaves it alone.
-        if (alertKind === 'created' || item.timestamp >= issue.getFloat('lastSeen')) {
-          issue.set('name', item.name);
-          issue.set('message', item.message);
-          issue.set('title', item.name + ': ' + item.message);
-          issue.set('service', item.service);
-        }
-        issue.set('level', issue.getString('level') === 'fatal' ? 'fatal' : item.level);
-        issue.set('firstSeen', Math.min(issue.getFloat('firstSeen'), item.timestamp));
-        issue.set('lastSeen', Math.max(issue.getFloat('lastSeen'), item.timestamp));
-        issue.set('lastReceivedAt', now);
-        issue.set('occurrenceCount', issue.getInt('occurrenceCount') + 1);
+      const result = storeEntry(tx, table, item, who, state, function (entry) {
+        // Clients that predate per-entry versions leave it out; theirs is the credential's. An empty one is kept.
+        if (entry.appVersion === undefined) entry.appVersion = who.appVersion;
+        if (entry.sessionId && !linked(tx, context, entry.sessionId, sessionToken)) entry.sessionId = '';
+        if (!entry.room) entry.room = core.label(context.getString('room'), 128);
+      });
+      // A reused ID with different content is skipped and counted, not allowed to sink the rest of the batch.
+      if (result === 'duplicate') duplicates++;
+      else if (result === 'conflict') conflicts++;
+      else if (result === 'budget') base.fail(429, 'Observability storage budget reached');
+      else {
+        accepted++;
+        uploaded += sent;
+        stored += result;
       }
-      const alerting = alertKind && cfg.alerts_enabled;
-      const issueBytes = issue ? core.bytes(JSON.stringify(summary(issue, 'issue'))) + 512 : 0;
-      const alertBytes = alerting ? core.bytes(JSON.stringify({ issueId: issue.id, title: issue.getString('title'), kind: alertKind, timestamp: now, acknowledged: false })) + 512 : 0;
-      const bytes = core.bytes(JSON.stringify(Object.assign({}, item, { accountId: accountId, deviceId: deviceId }))) + 512 + issueBytes + alertBytes;
-      if (daily + bytes > cfg.daily_limit_mb * 1024 * 1024) base.fail(429, 'Observability storage budget reached');
-      if (issue) {
-        tx.save(issue);
-        if (alerting) addAlert(tx, issue, alertKind, now, cfg);
-      }
-      const row = new Record(tx.findCollectionByNameOrId(table));
-      for (const key of ['accountId', 'deviceId', 'platform', 'appVersion']) row.set(key, context.getString(key));
-      for (const key of Object.keys(item)) row.set(key, key === 'attributes' ? JSON.stringify(item[key]) : item[key]);
-      row.set('payloadHash', payloadHash);
-      row.set('receivedAt', now);
-      row.set('byteSize', bytes);
-      if (issue) row.set('issue', issue.id);
-      tx.save(row);
-      accepted++;
-      uploaded += sent;
-      stored += bytes;
-      daily += bytes;
     });
     addDailyBytes(tx, budget, stored);
   });
@@ -322,6 +411,141 @@ function ingestion(e, kind) {
     spend(uploaded);
   }
   return { ok: true, accepted: accepted, duplicates: duplicates, conflicts: conflicts };
+}
+
+// The header names a recording, which is linked only when it exists and, where both are known, has the same account.
+function serverLink(tx, sessionId, accountId) {
+  let session;
+  try { session = tx.findRecordById('replay_sessions', sessionId); } catch (_) { return false; }
+  const owner = session.getString('accountId');
+  return !owner || !accountId || owner === accountId;
+}
+
+// An error PocketBase itself reported in its logs. It is stored like a client error, but skipped rather than
+// refused while capture is off, for a forgotten account, or past the daily budget.
+function serverError(app, entry) {
+  const cfg = cachedConfig(app);
+  if (!cfg.errors_enabled || !cfg.server_errors) return false;
+  const item = {
+    eventId: entry.eventId, timestamp: entry.timestamp, service: SERVER_DEVICE, room: '', message: entry.message, attributes: entry.attributes || {},
+    sessionId: entry.sessionId || '', appVersion: '', level: 'error', name: entry.name, stack: entry.stack || '', handled: false,
+  };
+  const who = { accountId: entry.accountId || '', deviceId: SERVER_DEVICE, platform: SERVER_DEVICE, appVersion: '' };
+  let stored = false;
+  app.runInTransaction(function (tx) {
+    if (replay.isForgotten(tx, who.accountId)) return;
+    const now = Date.now();
+    const budget = dailyBytes(tx, now);
+    const result = storeEntry(tx, 'replay_errors', item, who, { cfg: cfg, now: now, daily: budget.bytes }, function (value) {
+      if (value.sessionId && !serverLink(tx, value.sessionId, who.accountId)) value.sessionId = '';
+    });
+    stored = typeof result === 'number';
+    addDailyBytes(tx, budget, stored ? result : 0);
+  });
+  return stored;
+}
+
+// Server errors stored this minute, across all sources, so a flood cannot spend the daily budget at once.
+function serverErrorCount(app) {
+  const state = load(app.store(), 'observability:server-errors');
+  return state.minute === Math.floor(Date.now() / 60000) && Number.isSafeInteger(state.count) ? state.count : 0;
+}
+
+// Imports failed requests, failed cron jobs and other error-level PocketBase logs since the cursor. PocketBase
+// writes its logs in batches a few seconds late, so the scan stays 30 seconds behind. Capture periods exclude
+// disabled rows even when off/on happened between sweeps. Past the per-minute cap, entries are passed over.
+function scanLogs(app, cfg, deadline) {
+  const pocketbase = require('./pocketbase-core.js');
+  const now = Date.now();
+  if (!cfg.errors_enabled || !cfg.server_errors) {
+    // Raw SQL edits bypass model hooks and have no modification timestamp. Exclude the unobserved interval
+    // conservatively from the last scanned boundary rather than importing a disabled-period error later.
+    app.runInTransaction(function (tx) {
+      const capture = capturePeriods(tx, cfg, now);
+      const periods = capture.periods;
+      const last = periods[periods.length - 1];
+      if (!last || last[1] !== null) return;
+      let boundary = last[0];
+      try {
+        const cursor = JSON.parse(tx.findFirstRecordByData('replay_settings', 'key', LOG_CURSOR).getString('value'));
+        const scanned = Date.parse(String(cursor.created).replace(' ', 'T'));
+        if (Number.isFinite(scanned)) boundary = Math.max(boundary, Math.min(now, scanned));
+      } catch (_) {}
+      last[1] = boundary;
+      capture.save(periods);
+    });
+    return 0;
+  }
+  const capture = capturePeriods(app, cfg, now);
+  let periods = capture.periods;
+  // A direct settings edit is discovered here; dashboard saves already persisted their exact boundaries.
+  if (!capture.known || !periods.length || periods[periods.length - 1][1] !== null) {
+    app.runInTransaction(function (tx) {
+      const current = config(tx);
+      if (!current.errors_enabled || !current.server_errors) { periods = []; return; }
+      const state = capturePeriods(tx, current, now);
+      periods = state.periods;
+      if (!periods.length || periods[periods.length - 1][1] !== null) periods.push([now, null]);
+      state.save(periods);
+    });
+  }
+  if (!periods.length) return 0;
+  let row = null;
+  let cursor = null;
+  try {
+    row = app.findFirstRecordByData('replay_settings', 'key', LOG_CURSOR);
+    cursor = JSON.parse(row.getString('value'));
+  } catch (_) { cursor = null; }
+  function save(value) {
+    if (!row) {
+      row = new Record(app.findCollectionByNameOrId('replay_settings'));
+      row.set('key', LOG_CURSOR);
+    }
+    row.set('value', JSON.stringify(value));
+    app.save(row);
+  }
+  if (!cursor || typeof cursor.created !== 'string' || !Number.isFinite(Date.parse(cursor.created.replace(' ', 'T'))) || typeof cursor.id !== 'string') {
+    cursor = { created: pocketbase.logTime(periods[0][0] - 1), id: '' };
+    save(cursor);
+  }
+  let imported = 0;
+  let more = true;
+  while (more && Date.now() < deadline) {
+    // PocketBase indexes logs by hour, not the plain created timestamp. Keep the 5xx scan on that index too,
+    // so an installation with many successful requests does not rescan its whole retained log every minute.
+    const from = Date.parse(cursor.created.replace(' ', 'T'));
+    const end = Math.min(now - 30000, (Math.floor(from / 3600000) + 12) * 3600000 - 1);
+    const params = { created: cursor.created, id: cursor.id, until: pocketbase.logTime(end) };
+    const indexed = pocketbase.hours(from, end).map(function (value, i) { params['hour' + i] = value; return '{:hour' + i + '}'; }).join(', ');
+    const rows = arrayOf(new DynamicModel({ id: '', level: 0, message: '', data: '', created: '' }));
+    app.auxDB().newQuery("SELECT id, level, message, data, created FROM _logs WHERE strftime('%Y-%m-%d %H:00:00', created) IN (" + indexed + ") AND (level >= 8 OR CASE WHEN json_valid(data) THEN json_extract(data, '$.type') = 'request' AND json_extract(data, '$.status') >= 500 ELSE 0 END) AND (created, id) > ({:created}, {:id}) AND created <= {:until} ORDER BY created, id LIMIT 200")
+      .bind(params).all(rows);
+    more = rows.length === 200;
+    let read = 0;
+    for (; read < rows.length && Date.now() < deadline; read++) {
+      const at = Date.parse(String(rows[read].created).replace(' ', 'T'));
+      const enabledAt = periods.some(function (p) { return at >= p[0] && (p[1] === null || at < p[1]); });
+      const entry = enabledAt ? pocketbase.logError(rows[read]) : null;
+      const count = entry ? serverErrorCount(app) : 0;
+      // The cursor passes a row that cannot be stored, so one bad row never holds the scan back.
+      try {
+        if (entry && count < SERVER_ERRORS_PER_MINUTE && serverError(app, entry)) {
+          imported++;
+          app.store().set('observability:server-errors', JSON.stringify({ minute: Math.floor(Date.now() / 60000), count: count + 1 }));
+        }
+      } catch (error) { console.warn('replay: PocketBase log ' + rows[read].id + ' was not imported: ' + error); }
+      cursor = { created: rows[read].created, id: rows[read].id };
+    }
+    if (read < rows.length) more = false;
+    if (read) save(cursor);
+    if (read === rows.length && rows.length < 200 && end < now - 30000) {
+      // Move through an empty old window as well; otherwise a quiet period would strand the cursor forever.
+      cursor = { created: pocketbase.logTime(end), id: '~' };
+      save(cursor);
+      more = true;
+    }
+  }
+  return imported;
 }
 
 function errors(e) { return ingestion(e, 'error'); }
@@ -419,6 +643,8 @@ function lookup(e, table) {
 
 function issues(e) { admin(e); return listing(e.app, 'replay_issues', 'issue', filters(e, 'issue'), 'lastSeen'); }
 function logs(e) { admin(e); return listing(e.app, 'replay_logs', 'log', filters(e, 'log'), 'timestamp'); }
+// Occurrences across issues, such as every error of one recording for the player's activity panel.
+function errorList(e) { admin(e); return listing(e.app, 'replay_errors', 'error', filters(e, 'error'), 'timestamp'); }
 function log(e) { admin(e); return summary(lookup(e, 'replay_logs'), 'log', e.app); }
 
 // Log counts per level over time, for the same filters as the list. At most about 60 buckets,
@@ -654,6 +880,8 @@ function eraseAccountAll(tx, accountId) {
 
 function sweep(app) {
   const cfg = config(app);
+  // First, so alerts for what it imports go out in this same sweep.
+  try { scanLogs(app, cfg, Date.now() + 4000); } catch (error) { console.warn('replay: PocketBase log scan failed: ' + error); }
   try { deliver(app, cfg); } catch (error) { console.warn('replay: alert delivery failed: ' + error); }
   const now = Date.now();
   const deadline = now + 4000;
@@ -678,8 +906,9 @@ function route(e, name) {
 }
 
 module.exports = {
-  config: config, publicConfig: publicConfig, getSettings: getSettings, saveSettings: saveSettings, errors: errors, logsUpload: logsUpload,
-  issues: issues, issue: issue, updateIssue: updateIssue, removeIssue: removeIssue, logs: logs, log: log, volume: volume, removeLog: removeLog,
+  config: config, cachedConfig: cachedConfig, publicConfig: publicConfig, getSettings: getSettings, saveSettings: saveSettings, settingsChanged: settingsChanged, errors: errors, logsUpload: logsUpload,
+  serverError: serverError, scanLogs: scanLogs,
+  issues: issues, issue: issue, updateIssue: updateIssue, removeIssue: removeIssue, logs: logs, log: log, volume: volume, removeLog: removeLog, errorList: errorList,
   alerts: alerts, acknowledge: acknowledge, removeAlert: removeAlert, testAlert: testAlert, deliver: deliver, eraseBatch: eraseBatch,
   eraseAccountAll: eraseAccountAll, reconcileIssue: reconcileIssue, sweep: sweep, route: route,
 };

@@ -1,4 +1,5 @@
 import { byteLength } from './privacy';
+import { canTriggerReplayError } from './engine';
 import { describeException, redactLabel, redactText, safeAttributes, safeValue } from './observability-privacy';
 import type { ReplayMetadata, ReplaySessionContext } from './types';
 import type {
@@ -9,10 +10,12 @@ import type {
 export const OBSERVABILITY_LIMITS = {
   eventBytes: 16 * 1024, batchBytes: 60 * 1024, queueBytes: 512 * 1024,
   queueEvents: 200, batchEvents: 20, retries: 5, retryMs: 1000, maxRetryMs: 60000, configIntervalMs: 45000,
+  linkWaitMs: 10000,
 };
 const LEVELS: LogLevel[] = ['trace', 'debug', 'info', 'warn', 'error', 'fatal'];
 // `identity` is the account and device the entry was captured under; it is only ever sent with that identity's credential.
-interface Entry { event: ObservabilityEvent; json: string; bytes: number; attempts: number; identity: string }
+// `held` keeps an error back while the replay it triggered starts a session it can link to.
+interface Entry { event: ObservabilityEvent; json: string; bytes: number; attempts: number; identity: string; held?: boolean }
 
 function statusOf(error: unknown): number {
   try { const status = (error as { status?: unknown })?.status; return typeof status === 'number' ? status : 0; }
@@ -70,6 +73,7 @@ export function createObservability(options: ObservabilityOptions, runtime: Obse
   let retryAt = 0, retryDelay = 0;
   let refreshing: Promise<void> | null = null, refreshAgain = false, pumping: Promise<void> | null = null, lastRefreshAt = -Infinity;
   let flushTimer: unknown, configTimer: unknown, retryTimer: unknown;
+  const linkTimers = new Set<unknown>();
   let removeLifecycle: (() => void) | undefined, removeCapture: (() => void) | undefined;
   let capturing = false;
   const metrics: ObservabilityMetrics = {
@@ -142,7 +146,7 @@ export function createObservability(options: ObservabilityOptions, runtime: Obse
         ? { sessionId: context.sessionId, token: context.token } : null;
     } catch { return null; }
   }
-  function captureContext(kind: 'error' | 'log'): { identity: string; id: string; timestamp: number; service?: string; room?: string; sessionId?: string; sessionToken?: string } | null {
+  function captureContext(kind: 'error' | 'log'): { identity: string; id: string; timestamp: number; appVersion?: string; service?: string; room?: string; sessionId?: string; sessionToken?: string } | null {
     if (closed || !(kind === 'error' ? localErrors : localLogs)) return null;
     const value = metadata();
     if (!value) return null;
@@ -153,7 +157,8 @@ export function createObservability(options: ObservabilityOptions, runtime: Obse
     if (!token || expiresAt <= runtime.now()) renew();
     const context = session(), text = privateText(), timestamp = runtime.now();
     return {
-      identity: next, id: eventId(timestamp), timestamp,
+      // Sent even when empty, so the server never gives the entry the version of a credential another build renewed.
+      identity: next, id: eventId(timestamp), timestamp, appVersion: value.appVersion ?? '',
       ...(options.service ? { service: redactLabel(options.service, text, 128) } : {}),
       ...(value.room ? { room: redactLabel(value.room, text, 64) } : {}),
       ...(context ? { sessionId: context.sessionId, sessionToken: context.token } : {}),
@@ -162,8 +167,10 @@ export function createObservability(options: ObservabilityOptions, runtime: Obse
   function sanitize(event: ObservabilityEvent, text: string[]): ObservabilityEvent {
     const attributes = safeAttributes(event.attributes, text);
     if (event.kind === 'error' && typeof attributes?.groupingKey === 'string') attributes.groupingKey = redactLabel(attributes.groupingKey, text, 128).trim();
+    // The build an entry was captured in names its source maps, so it is kept as given rather than redacted.
     const common = {
       id: event.id, timestamp: event.timestamp,
+      ...(typeof event.appVersion === 'string' ? { appVersion: event.appVersion.replace(/[\x00-\x1f\x7f]/g, '').slice(0, 64) } : {}),
       ...(event.service ? { service: redactLabel(event.service, text, 128) } : {}),
       ...(event.room ? { room: redactLabel(event.room, text, 64) } : {}),
       ...(typeof event.sessionId === 'string' && /^[a-z0-9]{15}$/.test(event.sessionId) &&
@@ -178,14 +185,16 @@ export function createObservability(options: ObservabilityOptions, runtime: Obse
       handled: event.handled !== false, level: event.level === 'fatal' ? 'fatal' : 'error',
     } : { ...common, kind: 'log', level: LEVELS.includes(event.level) ? event.level : 'info' };
   }
-  function enqueue(event: ObservabilityEvent, entryIdentity: string): string | null {
+  // Queues without sending, so a caller can hold the entry for its replay link before a full batch goes.
+  function enqueue(event: ObservabilityEvent, entryIdentity: string): Entry | null {
     try {
       const text = privateText();
       let prepared = sanitize(event, text);
       if (options.beforeSend) {
         const changed = options.beforeSend(prepared);
         if (!changed) { metrics.droppedEvents++; return null; }
-        prepared = sanitize({ ...changed, id: event.id, timestamp: event.timestamp, kind: event.kind } as ObservabilityEvent, text);
+        // Facts of the capture stay as captured, including the build, which a callback written before the field existed would drop.
+        prepared = sanitize({ ...changed, id: event.id, timestamp: event.timestamp, kind: event.kind, appVersion: event.appVersion } as ObservabilityEvent, text);
       }
       if (!prepared.message) { metrics.droppedEvents++; return null; }
       const json = fit(prepared);
@@ -193,11 +202,46 @@ export function createObservability(options: ObservabilityOptions, runtime: Obse
       if (!json || queue.length >= OBSERVABILITY_LIMITS.queueEvents || queuedBytes + bytes > OBSERVABILITY_LIMITS.queueBytes) {
         metrics.droppedEvents++; return null;
       }
-      queue.push({ event: prepared, json, bytes, attempts: 0, identity: entryIdentity }); queuedBytes += bytes;
+      const entry: Entry = { event: prepared, json, bytes, attempts: 0, identity: entryIdentity };
+      queue.push(entry); queuedBytes += bytes;
       if (event.kind === 'error') metrics.capturedErrors++; else metrics.capturedLogs++;
-      if (token && queue.length >= maxBatchEvents) void flush();
-      return prepared.id;
+      return entry;
     } catch { metrics.droppedEvents++; return null; }
+  }
+  function sendIfFull(): void {
+    if (token && queue.length >= maxBatchEvents) void flush();
+  }
+  // A replay that keeps its recording on the device until something breaks uploads it now.
+  function requestTrigger(): Promise<ReplaySessionContext | null> | null {
+    const replay = options.replay;
+    if (!replay || typeof replay.trigger !== 'function' || !canTriggerReplayError(replay) || session()) return null;
+    try { return Promise.resolve(replay.trigger('error')).catch(() => null); } catch { return null; }
+  }
+  function relink(entry: Entry, context: ReplaySessionContext): void {
+    const event = { ...entry.event, sessionId: context.sessionId, sessionToken: context.token } as ObservabilityEvent;
+    const json = fit(event);
+    if (!json) return;
+    const bytes = byteLength(json);
+    queuedBytes += bytes - entry.bytes;
+    entry.event = event; entry.json = json; entry.bytes = bytes;
+  }
+  // The entry waits for the session its trigger starts, at most a few seconds, then goes with or without the link.
+  function holdForLink(entry: Entry, linking: Promise<ReplaySessionContext | null>): void {
+    entry.held = true;
+    let timer: unknown;
+    const release = () => {
+      if (!entry.held) return;
+      entry.held = false;
+      runtime.cancel(timer); linkTimers.delete(timer);
+      const context = session();
+      if (context && entry.identity === identity && queue.includes(entry)) relink(entry, context);
+      // A pump that already passed over the held entry would end without it, so flush again after it.
+      const again = () => { void flush(); };
+      if (pumping) pumping.then(again, again); else again();
+    };
+    timer = runtime.schedule(release, OBSERVABILITY_LIMITS.linkWaitMs);
+    linkTimers.add(timer);
+    linking.then(release, release);
   }
   function captureException(error: unknown, context: ExceptionContext = {}): string | null {
     if (capturing) return null;
@@ -208,8 +252,15 @@ export function createObservability(options: ObservabilityOptions, runtime: Obse
       const { identity: entryIdentity, ...fields } = common;
       const groupingKey = typeof context.groupingKey === 'string' ? redactLabel(context.groupingKey, privateText(), 128).trim() : '';
       const attributes = groupingKey ? Object.assign({ groupingKey }, safeAttributes(context.attributes, privateText()), { groupingKey }) : context.attributes;
-      return enqueue({ ...fields, ...describeException(error, privateText()), kind: 'error',
+      const entry = enqueue({ ...fields, ...describeException(error, privateText()), kind: 'error',
         handled: context.handled !== false, level: context.level === 'fatal' ? 'fatal' : 'error', attributes } as CapturedException, entryIdentity);
+      if (!entry) return null;
+      // Only an error the app keeps is a reason to upload the replay; one that beforeSend or a limit dropped is not.
+      // It is held before a full batch can go, so the error that fills one still waits for its link.
+      const linking = fields.sessionId ? null : requestTrigger();
+      if (linking) holdForLink(entry, linking);
+      sendIfFull();
+      return entry.event.id;
     } catch { metrics.droppedEvents++; return null; }
     finally { capturing = false; }
   }
@@ -220,7 +271,9 @@ export function createObservability(options: ObservabilityOptions, runtime: Obse
       const common = captureContext('log');
       if (!common || typeof message !== 'string') return null;
       const { identity: entryIdentity, ...fields } = common;
-      return enqueue({ ...fields, kind: 'log', level, message, attributes } as CapturedLog, entryIdentity);
+      const entry = enqueue({ ...fields, kind: 'log', level, message, attributes } as CapturedLog, entryIdentity);
+      if (entry) sendIfFull();
+      return entry ? entry.event.id : null;
     } catch { metrics.droppedEvents++; return null; }
     finally { capturing = false; }
   }
@@ -232,14 +285,14 @@ export function createObservability(options: ObservabilityOptions, runtime: Obse
       : JSON.stringify(safeValue(value, text))).join(' ');
     captureLog(capture.level, argumentsValue, { arguments: capture.arguments });
   }
-  function batch(): { entries: Entry[]; body: string; url: string } | null {
+  function batch(includeHeld = false): { entries: Entry[]; body: string; url: string } | null {
     if (!queue.length || !token) return null;
-    const first = queue.find((entry) => entry.identity === identity);
+    const first = queue.find((entry) => entry.identity === identity && (includeHeld || !entry.held));
     if (!first) return null;
     const kind = first.event.kind, entries: Entry[] = [];
     let bytes = byteLength(JSON.stringify({ token, ...(apiKey ? { apiKey } : {}), events: [] }));
     for (const entry of queue) {
-      if (entry.identity !== identity || entry.event.kind !== kind) continue;
+      if (entry.identity !== identity || entry.event.kind !== kind || (entry.held && !includeHeld)) continue;
       if (entries.length >= maxBatchEvents || bytes + entry.bytes + 1 > OBSERVABILITY_LIMITS.batchBytes) break;
       entries.push(entry); bytes += entry.bytes + 1;
     }
@@ -354,7 +407,8 @@ export function createObservability(options: ObservabilityOptions, runtime: Obse
     if (!options.transport?.beacon || !token || expiresAt <= runtime.now()) return;
     const value = metadata();
     if (!value || identityOf(value) !== identity) return;
-    const item = batch();
+    // A held entry leaves with the page too, even without its link.
+    const item = batch(true);
     try { if (item) options.transport.beacon(item.url, item.body); } catch { /* Exit upload is best effort. */ }
   }
   if (!closed) {
@@ -370,6 +424,8 @@ export function createObservability(options: ObservabilityOptions, runtime: Obse
       unload(); closed = true;
       epoch++; token = ''; expiresAt = 0; metrics.droppedEvents += queue.length; queue = []; queuedBytes = 0;
       runtime.cancel(flushTimer); runtime.cancel(configTimer); runtime.cancel(retryTimer);
+      for (const timer of linkTimers) runtime.cancel(timer);
+      linkTimers.clear();
       try { removeCapture?.(); } catch { /* Cleanup must not reach the app. */ }
       try { removeLifecycle?.(); } catch { /* Cleanup must not reach the app. */ }
     },

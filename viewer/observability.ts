@@ -23,6 +23,8 @@ export const OBSERVABILITY_RATE_DEFAULTS = {
 export interface ObservabilitySettings extends Record<keyof typeof OBSERVABILITY_RATE_DEFAULTS, number> {
   errors_enabled: boolean; logs_enabled: boolean; alerts_enabled: boolean;
   errors_retention_days: number; logs_retention_days: number; daily_limit_mb: number; alert_webhook_url?: string;
+  // An older server has no server error capture.
+  server_errors?: boolean;
 }
 export interface LogVolume {
   from: number; to: number; bucketMs: number; total: number;

@@ -16,11 +16,11 @@ async function drain(): Promise<void> { for (let i = 0; i < 5; i++) await new Pr
 
 function fakeClient() {
   const started: ReplayOptions[] = [];
-  const recorders: { stopped: number; flushed: number; refreshed: number }[] = [];
+  const recorders: { stopped: number; flushed: number; refreshed: number; triggers: (string | undefined)[] }[] = [];
   const observabilityStarted: ObservabilityOptions[] = [];
   const captures: { stopped: number; flushed: number; refreshed: number; exceptions: unknown[]; logs: unknown[] }[] = [];
   const startReplay = (value: ReplayOptions): ReplayController => {
-    const recorder = { stopped: 0, flushed: 0, refreshed: 0 };
+    const recorder = { stopped: 0, flushed: 0, refreshed: 0, triggers: [] as (string | undefined)[] };
     started.push(value);
     recorders.push(recorder);
     return {
@@ -29,6 +29,7 @@ function fakeClient() {
       refresh: async () => { recorder.refreshed++; },
       getMetrics: () => ({ recording: true, events: recorders.length }) as ReplayMetrics,
       getSessionContext: () => ({ sessionId: 'session00000001', token: 's'.repeat(64) }),
+      trigger: async (reason) => { recorder.triggers.push(reason); return { sessionId: 'session00000001', token: 's'.repeat(64) }; },
     };
   };
   const startObservability = (value: ObservabilityOptions): ObservabilityController => {
@@ -164,7 +165,7 @@ test('before start, flush and refresh do nothing and there are no metrics', asyn
   await replay.start(options);
   await replay.flush();
   await replay.refresh();
-  assert.deepEqual(recorders[0], { stopped: 0, flushed: 1, refreshed: 1 });
+  assert.deepEqual(recorders[0], { stopped: 0, flushed: 1, refreshed: 1, triggers: [] });
   assert.deepEqual(await replay.getMetrics(), { metrics: { recording: true, events: 1 } });
   await replay.stop();
   assert.equal(recorders[0].stopped, 1);
@@ -265,4 +266,19 @@ test('stopObservability cancels a standalone start still loading the client', as
   const start = replay.startObservability({ ...options, logs: true });
   await replay.stopObservability(); release(f.client); await start;
   assert.equal(f.captures.length, 0); assert.deepEqual(await replay.getObservabilityMetrics(), { metrics: null });
+});
+
+test('trigger reaches the running recorder, returns only its ID, and captured errors can trigger it too', async () => {
+  const f = fakeClient(), replay = plugin('android', f.client);
+  assert.deepEqual(await replay.trigger({ reason: 'report' }), { sessionId: null });
+  await replay.start({ ...options, errors: true });
+  assert.deepEqual(await replay.trigger({ reason: 'report' }), { sessionId: 'session00000001' });
+  assert.deepEqual(await replay.trigger(), { sessionId: 'session00000001' });
+  assert.deepEqual(f.recorders[0].triggers, ['report', undefined]);
+  assert.deepEqual(await f.observabilityStarted[0].replay!.trigger!('error'), { sessionId: 'session00000001', token: 's'.repeat(64) });
+  assert.deepEqual(f.recorders[0].triggers, ['report', undefined, 'error']);
+  await replay.stop();
+  await replay.startObservability({ ...options, errors: true });
+  assert.equal(await f.observabilityStarted[1].replay!.trigger!('error'), null);
+  await replay.stopObservability();
 });

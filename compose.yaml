@@ -14,4 +14,8 @@ services:
       REPLAY_APP_VERSION_PREFIX: ${REPLAY_APP_VERSION_PREFIX:-}
       REPLAY_EXTRA_APP_VERSION_PREFIX: ${REPLAY_EXTRA_APP_VERSION_PREFIX:-}
       REPLAY_EXTRA_PLATFORM: ${REPLAY_EXTRA_PLATFORM:-}
+      # Lets build jobs upload source maps with pb-replay-sourcemaps (32 to 512 characters).
+      REPLAY_SOURCEMAP_KEY: ${REPLAY_SOURCEMAP_KEY:-}
+      # on puts each traced SDK call's ID into PocketBase's request log, for request explanations; off unless set to on.
+      REPLAY_TRACE_REQUESTS: ${REPLAY_TRACE_REQUESTS:-}
     restart: unless-stopped

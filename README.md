@@ -1,28 +1,45 @@
 # PocketBase Replay
 
-Self-hosted DOM session replay, error tracking and logs for PocketBase, with
-an rrweb recorder and a private dashboard
+Self-hosted session replay for web and Flutter apps, error tracking and logs
+for PocketBase, with an rrweb recorder and a private dashboard
 
 ## Features
 
 - Add replay to an existing PocketBase or run a dedicated replay server
 - Use a framework-independent client in web and Electron apps, with a
-  [Capacitor plugin](plugins/capacitor/README.md) for Android and iOS
+  [Capacitor plugin](plugins/capacitor/README.md) for Android and iOS, and a
+  [Flutter plugin](plugins/flutter/README.md) that records Flutter apps on
+  mobile, web and desktop
 - Select sessions with percentage sampling or verified account allowlists
+- Record only when something breaks: each device keeps the last minute or two
+  in memory and uploads it after an error, a bug report or `replay.trigger()`,
+  so you keep every broken session without storing the rest
 - Control masking, retention and storage limits from the dashboard
 - Find recordings by account, device, date or room and play them with timeline,
   speed and pause controls
+- Follow network requests, console output, clicks, page changes and errors in
+  an activity panel synced with playback, with errors and failed requests marked
+  on the timeline
+- See calls your app's PocketBase client makes, such as
+  `orders.create · 400 · Invalid: total`, with refused field names and codes.
+  Investigate failures using current API rules, record lookups and optional
+  request-log links; inferred explanations are marked as likely. Errors
+  thrown in your pb_hooks and cron jobs become issues when server capture is on.
+  See [PocketBase calls](docs/integration.md#pocketbase-calls)
 - Capture exceptions, group repeated errors into issues, and resolve or ignore
   issues, with alerts in the dashboard and to a Slack, Discord or other webhook
   when an issue appears or returns
+- Upload each build's source maps with `npx pb-replay-sourcemaps` to see the
+  original function, file, line and code in stack traces, with issues grouped by
+  original frames across releases. See [source maps](docs/observability.md#source-maps)
 - Ingest structured logs, search by message, severity, service, account,
   device or recording, and chart their volume by level over time
 - Configure errors and logs independently, with their own retention and a
   shared daily storage limit
 - Optionally require revocable ingestion keys, verified accounts, or both
 
-Recording, error tracking and logs are off by default. Dashboard access
-requires a PocketBase superuser
+Recording, network and console capture, error tracking and logs are off by
+default. Dashboard access requires a PocketBase superuser
 
 Ingestion requirements default off. Open **Security** to create
 keys and enable **Require API key** or **Require a signed-in account**. Client
@@ -53,7 +70,7 @@ low/moderate traffic on x86. Sentry's cover a deployment with Session Replay
 
 | Project | Features | Backend |
 | --- | --- | --- |
-| **PocketBase Replay** | DOM replay, JavaScript errors, logs and alerts | [One PocketBase process with SQLite](docs/installation.md) |
+| **PocketBase Replay** | DOM and Flutter screen replay, JavaScript, Dart and PocketBase server errors, logs and alerts, and PocketBase calls explained by their API rules | [One PocketBase process with SQLite](docs/installation.md) |
 | **PostHog** | [Replay, product analytics, flags and experiments](https://posthog.com/docs) | [PostgreSQL, ClickHouse, Redpanda, cache and object storage](https://github.com/PostHog/posthog/blob/master/docker-compose.hobby.yml) |
 | **OpenReplay** | [Replay, analytics and co-browsing](https://github.com/openreplay/openreplay) | [PostgreSQL, ClickHouse, cache and object storage](https://github.com/openreplay/openreplay/blob/main/scripts/docker-compose/docker-compose.yaml) |
 | **Sentry** | [Errors, replay, tracing, profiling and logs](https://github.com/getsentry/self-hosted/blob/26.9.0/sentry/sentry.conf.example.py) | [PostgreSQL, ClickHouse, Kafka, caches and object storage](https://github.com/getsentry/self-hosted/blob/26.9.0/docker-compose.yml) |
@@ -75,15 +92,18 @@ with synthetic demo data
 ### Session replay
 
 Find sessions by account, device, room or date, then watch the recording with
-timeline, speed and pause controls. Open the session's related issues and logs
-from the player
+timeline, speed and pause controls. The activity panel below the player lists
+clicks, page changes, PocketBase calls, network requests, console output, errors
+and logs at their moments; select a row to jump there, or a PocketBase call to
+see why the server refused it
 
 ![Session dashboard with account and device filters, a session list, and a checkout recording in the timeline viewer](docs/images/dashboard-replay.png)
 
 ### Errors and issues
 
-Repeated errors are grouped into issues. Inspect occurrences, stack traces and
-device context, jump to the linked replay, and resolve or ignore an issue.
+Repeated errors are grouped into issues. Inspect occurrences, stack traces with
+original code through source maps, and device context, jump to the linked
+replay, and resolve or ignore an issue.
 Alerts flag new issues and failures that return after being resolved
 
 ![Issues dashboard with grouped payment errors, occurrence counts, stack trace, and a link to the session replay](docs/images/dashboard-issues.png)
@@ -110,21 +130,28 @@ also controls issue alerts
 
 ## Platform plugins
 
-**Capacitor is available in this repository.** The
+**Capacitor and Flutter are available in this repository.** The
 [`capacitor-pocketbase-replay`](plugins/capacitor/README.md) plugin adds Android
 and iOS app lifecycle handling and native HTTP transport to the core client.
 It records the WebView DOM and captures JavaScript errors and application logs,
 pausing and resuming when the app's native state changes
 
+The [`pocketbase_replay_flutter`](plugins/flutter/README.md) package records a
+Flutter app's screen as images, with text fields and marked areas masked on the
+device, and its touches, page changes, PocketBase calls, network requests and
+console output. It captures Dart errors and logs, and works in trigger mode.
+It needs no native code, so it runs on Android, iOS, web and desktop
+
 | Platform | Status | Integration |
 | --- | --- | --- |
 | [Capacitor](plugins/capacitor/README.md) | Implemented | Android, iOS and web; session replay, JavaScript errors and logs |
+| [Flutter](plugins/flutter/README.md) | Implemented | Android, iOS, web, macOS, Windows and Linux; screen replay, Dart errors and logs |
 | React Native | Future integration | No plugin implemented yet |
 | NativeScript | Future integration | No plugin implemented yet |
-| Flutter | Future integration | No plugin implemented yet |
 
 Plugins ship as separate packages. Native interfaces need a platform-specific
-recorder; the current recorder captures browser and WebView DOM. See the
+recorder: the core client captures browser and WebView DOM, and the Flutter
+plugin captures the Flutter screen. See the
 [platform plugin guide](plugins/README.md) for the architecture and how to add
 an integration
 
@@ -153,6 +180,9 @@ npm install /path/to/pocketbase-replay-VERSION.tgz
 ```
 
 The client works with bundlers such as Vite, and TypeScript is optional
+
+For a Flutter app, add the [Flutter plugin](plugins/flutter/README.md#install)
+instead
 
 ### 2. Set up PocketBase
 
@@ -196,6 +226,9 @@ lifecycle handling and native asset setup
 In a Capacitor app, the [Capacitor plugin](plugins/capacitor/README.md) wraps
 this client and adds native pause and resume
 
+In a Flutter app, the [Flutter plugin](plugins/flutter/README.md#usage) takes
+the same endpoint, metadata and options, and sends to the same server
+
 ### 4. Add errors and logs
 
 In `/dash/replay`, open **Diagnostics** and enable the features you need
@@ -231,8 +264,14 @@ privacy, alert behavior and the ingestion API
 - Input values and editable text are masked by default
 - Text outside inputs needs masking or blocking rules for your app
 - Canvas, WebGL, iframes, video and audio are not captured
+- Flutter apps are recorded as screen images, with text fields, `ReplayMask`
+  areas and platform views painted over on the device. See
+  [Flutter privacy](plugins/flutter/README.md#privacy)
+- Network requests and console messages are recorded only when turned on, never
+  with headers, bodies or query strings
 - DOM replay needs available images, fonts and other page assets
-- The client requires Chromium 91 or newer
+- The client requires Chromium 91 or newer, and the Flutter plugin Flutter
+  3.24 or newer
 
 Use HTTPS for remote deployments and keep superuser tokens out of your frontend
 
@@ -242,12 +281,12 @@ Use HTTPS for remote deployments and keep superuser tokens out of your frontend
 | --- | --- |
 | [Installation](docs/installation.md) | Existing and dedicated servers, upgrades, HTTPS and reverse proxies |
 | [Client integration](docs/integration.md) | Metadata, Capacitor, Electron, custom transports and native assets |
-| [Configuration](docs/configuration.md) | Sampling, retention, storage budgets, privacy rules and playback |
-| [Errors and logs](docs/observability.md) | Capture options, issue resolution, alerts, searchable logs and ingestion |
+| [Configuration](docs/configuration.md) | Sampling, trigger mode, retention, storage budgets, privacy rules, playback and the activity panel |
+| [Errors and logs](docs/observability.md) | Capture options, issue resolution, alerts, source maps, searchable logs and ingestion |
 | [Upload security and accounts](docs/authentication.md) | Optional API keys, verified-account requirements, token verification and account deletion |
 | [Privacy and limits](docs/privacy-and-limits.md) | Captured data, retries, recording limits and compatibility |
 | [Development](docs/development.md) | Local checks, performance measurement and releases |
-| [Platform plugins](plugins/README.md) | Capacitor, future React Native, NativeScript and Flutter integrations, and plugin architecture |
+| [Platform plugins](plugins/README.md) | Capacitor and Flutter plugins, future React Native and NativeScript integrations, and plugin architecture |
 
 ## License
 

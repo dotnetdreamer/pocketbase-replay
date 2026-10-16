@@ -12,7 +12,10 @@ const LIMITS = {
   clockSkewMs: 24 * 60 * 60 * 1000,
   selectorChars: 20000,
 };
-const DEFAULTS = { mode: 'off', percentage: 0, account_ids: [], retention_days: 14, daily_limit_mb: 1024, mask_selector: '', block_selector: '', record_images: false };
+const DEFAULTS = {
+  mode: 'off', percentage: 0, account_ids: [], retention_days: 14, daily_limit_mb: 1024, mask_selector: '', block_selector: '', record_images: false,
+  record_network: false, record_console: false, upload_mode: 'session', record_pocketbase: true,
+};
 
 function fail(status, message) {
   const error = new Error(message);
@@ -51,6 +54,25 @@ function flag(value, name) {
   return value;
 }
 
+// Missing means whole sessions, as before triggers existed.
+function uploadMode(value) {
+  if (value === undefined || value === null) return 'session';
+  if (value !== 'session' && value !== 'trigger') fail(400, 'Invalid upload_mode');
+  return value;
+}
+
+// Why a device uploaded what it kept, as the app named it: an error, a bug report, a checkout failure.
+// Only a label, so it is cleaned rather than refused: a refusal would cost the recording it came with.
+function reason(value) {
+  if (typeof value !== 'string') return '';
+  return value.replace(/[\x00-\x1f\x7f]/g, '').trim().slice(0, 64).replace(/[\uD800-\uDBFF]$/, '').trim();
+}
+
+// Clients list what they can do; an older one sends nothing and gets only what it understands.
+function supports(body, feature) {
+  return Array.isArray(body.features) && body.features.length <= 16 && body.features.indexOf(feature) >= 0;
+}
+
 function metadata(value) {
   const body = object(value);
   const room = text(body.room, 'room', 128, false);
@@ -80,6 +102,11 @@ function settings(value) {
     mask_selector: selector(value.mask_selector, 'mask_selector'),
     block_selector: selector(value.block_selector, 'block_selector'),
     record_images: flag(value.record_images, 'record_images'),
+    record_network: flag(value.record_network, 'record_network'),
+    record_console: flag(value.record_console, 'record_console'),
+    upload_mode: uploadMode(value.upload_mode),
+    // On unless turned off: nothing is recorded until the app hands its PocketBase client to the recorder.
+    record_pocketbase: value.record_pocketbase === undefined || value.record_pocketbase === null ? true : flag(value.record_pocketbase, 'record_pocketbase'),
   };
 }
 
@@ -136,4 +163,7 @@ function gaps(items, previous) {
   return missing;
 }
 
-module.exports = { LIMITS: LIMITS, DEFAULTS: DEFAULTS, fail: fail, object: object, text: text, integer: integer, selector: selector, flag: flag, metadata: metadata, settings: settings, enabled: enabled, chunk: chunk, page: page, authURL: authURL, gaps: gaps };
+module.exports = {
+  LIMITS: LIMITS, DEFAULTS: DEFAULTS, fail: fail, object: object, text: text, integer: integer, selector: selector, flag: flag, uploadMode: uploadMode,
+  reason: reason, supports: supports, metadata: metadata, settings: settings, enabled: enabled, chunk: chunk, page: page, authURL: authURL, gaps: gaps,
+};

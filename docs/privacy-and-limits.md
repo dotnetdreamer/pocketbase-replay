@@ -9,15 +9,32 @@ DOM replay reconstructs the page from recorded events, so external assets must r
 It is not a pixel video archive, and canvas areas remain blank
 
 - All input values and contenteditable text are masked
-- Canvas, iframes, video and audio are blocked
-- No screenshots, WebGL capture, microphone or network payload recording is enabled
-- Replay does not record console output. The separate [logs feature](observability.md) can collect selected console levels when explicitly enabled
+- Canvas, iframes, video and audio are blocked. Nothing inside a blocked element is uploaded, including the page in a same-origin iframe and content added to a blocked element's shadow root
+- No screenshots, WebGL capture, microphone or network payloads are recorded
+- With **Record network requests** on in Recording settings, each `fetch` and `XMLHttpRequest` adds only its method, address without its query, status and timing, at most 100 a minute. Headers and bodies are never read, and requests to the replay API itself are skipped
+- With **Record console messages** on, the recording also carries console output and uncaught errors, at most 100 a minute and 1,000 characters each. Text is redacted as for [diagnostics](observability.md#privacy-and-limits) and by `sensitiveText`, and errors show only their name and message. It is off by default because console output can contain private content. The separate [logs feature](observability.md) stores selected console levels on its own
+- Page changes made through the browser history are noted by address without query or fragment, at most 50 a minute
+- For an app that passes its PocketBase client, each call adds its collection, action, record ID, status, time, item counts, fixed standard PocketBase error messages and the names and codes of refused fields, at most 150 a minute. Arbitrary validation and hook messages are omitted because they can echo private values. Request and response field values, filter text and auth tokens are not recorded. The call's random ID, and the recording's ID while one is live, go to the app's own PocketBase in an `X-Replay-Request` header. Only when the latest replay configuration advertises `REPLAY_TRACE_REQUESTS=on`, the same IDs also go in a `__replayRequest` query marker to survive failures before the tracing hook. Clients pick up tracing changes at their next settings check. The dashboard's explanation of a call reads PocketBase's request log without its query string, IP address or user agent
 - Text rendered outside an input needs a mask or block rule, set in the dashboard or passed to `startReplay`, or a `sensitiveText` list
 - A rule the app cannot parse stops recording instead of leaving text unmasked
 - Sensitive attributes and every `data-*` attribute outside a short safe list are removed by default, which can make some layouts replay slightly off. Apps can opt in fixed, finite UI states with [`preserveDataAttributes`](integration.md#optional-settings)
-- URL query strings and navigation fragments are stripped, but secrets embedded in URL path segments still need a blocking rule
+- URL query strings and navigation fragments are stripped. In Flutter route and network URLs, `sensitiveText` also redacts matching path text, including its percent-encoded form. Other private path segments still need app-specific handling; DOM masking does not sanitize diagnostic or network URLs
 
 Review [privacy rules](configuration.md#privacy-rules) against your actual UI and watch a new recording after changing the UI or its rules
+
+### Flutter apps
+
+The [Flutter plugin](../plugins/flutter/README.md) records the screen as images, so whatever is visible is recorded, apart from what it paints over on the device before a frame leaves it:
+
+- Text fields, always, with the text selection magnifier, and any widget inside `ReplayMask`
+- Text containing a `sensitiveText` word, and all text or all images when the app asks for it or the dashboard's mask rules include `*` or its block rules `img` or `*`. Other CSS rules apply only to web pages
+- Platform views and textures, such as maps, web views and video, as plain grey boxes
+
+Frames are PNG images of at most 1280 pixels on the longer side, taken at most once per second by default and only when the screen changed; when only part of it changed, only that area is sent. Masks follow painted descendants through transforms and overflow, so a page covered by another route is left alone. Sensitive text is checked against its visible spans, including visible overflow, rather than alternate accessibility text. Text drawn by a `CustomPainter` is not recognised as text and needs a `ReplayMask` covering its painted area; images drawn with `Ink` also need an explicit mask
+
+A tap names a public control by its text or safe semantics label and never shows a text field's content. Controls inside one `ReplayMask` share a generic `*` target covering the outermost mask, and their tap, hover and drag positions are coarsened to its centre. A semantics label that includes masked descendants is replaced by individually redacted visible text. Network requests, console output, page changes and PocketBase calls are recorded under the rules above, with route names as page addresses
+
+Frames are larger than DOM events: the Flutter client buffers up to 8 MiB before it starts again from a fresh frame, and in trigger mode keeps at most 6 MiB on the device. It has no exit beacon: leaving the screen uploads what is queued, and `stop()` drops what is left, so call `flush()` first
 
 ## Access and upload protection
 
@@ -49,6 +66,8 @@ putting private messages or personal data in application logs. See
 ## Client buffers and recovery
 
 The client bounds its buffers and discards all queued history when recovery is necessary, then records a fresh snapshot
+
+In [trigger mode](configuration.md#record-only-when-something-breaks) the recording stays in the page's memory, at most 2 MiB from the newest full snapshot at least a minute old, with a fresh snapshot every minute. It is sent only after a trigger and is otherwise discarded, including at page exit and when the account or device changes. A trigger may briefly let the upload queue hold that whole backlog
 
 A single event over 1 MiB stops that recorder instance to protect the host app from oversized pages
 

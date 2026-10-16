@@ -77,6 +77,10 @@ await PocketBaseReplay.stop();
 `beforeSend`. Enable **Collect errors** and **Collect logs** in the dashboard's
 **Diagnostics** settings to receive errors and logs. Both features default off
 
+Pass your PocketBase JS SDK client as `pocketbase` to record its calls, such as
+`orders.create · 400`, and see in the player why the server refused one. See
+[PocketBase calls](https://github.com/dotnetdreamer/pocketbase-replay/blob/main/docs/integration.md#pocketbase-calls)
+
 The optional `apiKey` option works on `start` and `startObservability`. Set it
 when you enable **Require API key** under the dashboard's **Security**
 button. A combined `start` passes the same key to replay and
@@ -172,6 +176,19 @@ getMetrics() => Promise<GetMetricsResult>
 
 Returns counters for the running recorder, or `null` before `start` and after `stop`
 
+### trigger(options)
+
+```ts
+trigger(options?: { reason?: string }) => Promise<{ sessionId: string | null }>
+```
+
+Marks this moment on the recording, for example from a **Report a problem**
+button. When the server records only when something breaks, it also uploads
+what the device kept and records live for one more minute. Resolves with the
+recording's ID, or `null` when nothing is recorded or its session cannot start
+yet. Errors captured by the plugin trigger the recorder too. See
+[triggers](../../docs/integration.md#triggers-and-bug-reports)
+
 ### startObservability(options)
 
 ```ts
@@ -237,6 +254,8 @@ console capture. It does not collect native process crashes or device system log
 | --- | --- |
 | `StartOptions` | `ReplayOptions` plus `errors`, `logs`, `service` and `beforeSend` |
 | `GetMetricsResult` | `{ metrics: ReplayMetrics \| null }` |
+| `TriggerOptions` | `{ reason? }`, a label of up to 64 characters |
+| `TriggerResult` | `{ sessionId: string \| null }` |
 | `CaptureExceptionOptions` | `{ error, attributes?, groupingKey?, handled?, level? }` |
 | `CaptureLogOptions` | `{ level, message, attributes? }` |
 | `GetObservabilityMetricsResult` | `{ metrics: ObservabilityMetrics \| null }` |

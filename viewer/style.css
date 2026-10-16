@@ -114,6 +114,7 @@ button.secondary { background: transparent; } button.secondary:hover { backgroun
 .session-open > span:first-child { color: #edf2f7; font-size: 15px; font-weight: 600; }
 .session-open span span, .session-open small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .session-open small { flex: none; max-width: 55%; color: #aebdd1; font-size: 12px; font-weight: 400; }
+.session-open > .session-trigger { color: #ffca86; font-size: 12px; }
 .session .danger { flex: none; margin: 0 10px 0 2px; padding: 4px 9px; font-size: 12px; background: transparent; border-color: #5c2c35; color: #ffb3bd; }
 .session .danger:hover, .account-tools button:hover { background: #7b2d36; color: #fff; }
 .sessions-end { display: flex; justify-content: center; align-items: center; min-height: 52px; padding: 8px; color: #aebdd1; font-size: 13px; }
@@ -126,8 +127,9 @@ button.secondary { background: transparent; } button.secondary:hover { backgroun
 .recording-heading h2 { margin: 0; }
 #recording-info, #gaps, #idle { margin: 4px 0 0; }
 #gaps:empty, #idle:empty { margin: 0; }
-/* Sized by the space left in the panel; the replay is fitted to it. */
-#player { flex: 1; min-height: 240px; overflow: hidden; margin-top: 12px; }
+/* Sized by the space left in the panel; the replay is fitted to it above rrweb's 80 px of controls, which the
+   minimum leaves room for under a replay at least 240 px tall. */
+#player { flex: 1; min-height: 320px; overflow: hidden; margin-top: 12px; }
 .clock { margin: 6px 0 0; min-height: 1.5em; text-align: center; font-size: 13px; }
 .rr-player { margin: auto; color: #17202e; }
 .rr-player button { color: inherit; background: transparent; border: 0; }
@@ -224,6 +226,8 @@ button.secondary { background: transparent; } button.secondary:hover { backgroun
   .workspace { flex: 1; min-height: 520px; }
   .telemetry-workspace { min-height: 0; }
   .telemetry-panel { overflow-y: auto; }
+  /* When the player and activity cannot both fit at their smallest, the recording scrolls within its panel. */
+  #recording { overflow-y: auto; }
 }
 @media (max-width: 900px) {
   .topbar { grid-template-columns: auto minmax(0, 1fr); grid-template-areas: 'brand actions' 'tabs tabs' 'status status'; }

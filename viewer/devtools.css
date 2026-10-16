@@ -1,0 +1,53 @@
+/* Activity below the player. On wide screens it keeps a bounded height with its own scroll, so the player keeps most of the panel.
+   It clips its corners without becoming a scroll container, which could shrink it past its own toolbar. */
+.devtools { flex: none; display: flex; flex-direction: column; margin-top: 8px; border: 1px solid #2e3c50; border-radius: 10px; background: #151e2c; overflow: clip; }
+.devtools-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 10px; padding: 5px 8px; border-bottom: 1px solid #2e3c50; background: #18212f; }
+.devtools-heading { margin: 0 2px; font-size: 12px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: #8fa3bf; }
+.devtools-filters { display: flex; flex-wrap: wrap; gap: 2px; }
+.devtools-filter { padding: 2px 9px; font-size: 12px; line-height: 18px; border-color: transparent; border-radius: 6px; background: transparent; color: #aebdd1; }
+.devtools-filter:hover { background: #1f2d42; color: #edf2f7; }
+.devtools-filter[aria-pressed='true'] { background: #254c79; color: #fff; }
+.devtools-count { margin-left: 5px; font-variant-numeric: tabular-nums; opacity: .8; }
+.devtools-count:empty { display: none; }
+.devtools-note, .devtools-empty { margin: 0; padding: 6px 12px; font-size: 12px; color: #8fa3bf; }
+.devtools-note { border-bottom: 1px solid #2e3c50; }
+/* Positioned, so a row's offsetTop is measured from the top of the list. */
+.devtools-list { position: relative; flex: 1; min-height: 0; overflow-y: auto; margin: 0; padding: 4px; list-style: none; }
+.devtools-row { display: grid; grid-template-columns: 3.6em 5.6em minmax(0, 1fr) auto; align-items: baseline; gap: 8px; width: 100%; padding: 2px 8px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: #edf2f7; font-size: 13px; line-height: 20px; text-align: left; white-space: nowrap; }
+.devtools-row:hover { background: #1f2d42; }
+.devtools-row:focus-visible { outline-offset: -2px; }
+.devtools-row[aria-current='true'] { border-color: #73b7ff; background: #1a2a42; }
+.devtools-time { color: #8fa3bf; font-size: 12px; font-variant-numeric: tabular-nums; text-align: right; }
+.devtools-kind { justify-self: start; padding: 0 5px; border: 1px solid #47566c; border-radius: 4px; color: #aebdd1; font-size: 10px; line-height: 16px; letter-spacing: .04em; text-transform: uppercase; }
+.devtools-title { overflow: hidden; text-overflow: ellipsis; }
+.devtools-detail { max-width: 18em; overflow: hidden; text-overflow: ellipsis; color: #aebdd1; font-size: 12px; font-variant-numeric: tabular-nums; }
+.devtools-row[data-severity='warn'] .devtools-kind { border-color: #896139; color: #ffca86; }
+.devtools-row[data-severity='warn'] .devtools-title { color: #ffca86; }
+.devtools-row[data-severity='error'] .devtools-kind { border-color: #8d4752; color: #ffb3bd; }
+.devtools-row[data-severity='error'] .devtools-title { color: #ffb3bd; }
+.devtools-row[data-kind='trigger'] .devtools-kind { border-color: #5d4f9a; color: #cfc4ff; }
+/* On a short window it gives way to the player first, though never past its toolbar, any notice and two rows,
+   however these wrap; the recording scrolls instead. */
+@media (min-width: 901px) {
+  .devtools { flex: 0 1 clamp(150px, 26vh, 250px); }
+  .devtools-list { flex-basis: 0; min-height: 60px; }
+}
+/* Stacked, the panel follows the player down the page. */
+@media (max-width: 900px) { .devtools { max-height: 50vh; } }
+@media (max-width: 480px) {
+  .devtools-row { grid-template-columns: 3.6em minmax(0, 1fr) auto; }
+  .devtools-kind { display: none; }
+}
+/* PocketBase calls have their own badge, and a selected call opens its details under its row. */
+.devtools-row[data-kind='pocketbase'] .devtools-kind { border-color: #2f6f8f; color: #9fd8ff; }
+.devtools-row[aria-expanded='true'] { border-color: #47566c; }
+.devtools-inspect { margin: 2px 6px 8px calc(3.6em + 16px); padding: 8px 10px; border-left: 2px solid #2f6f8f; border-radius: 0 6px 6px 0; background: #18212f; color: #aebdd1; font-size: 12px; line-height: 18px; }
+.devtools-inspect p { margin: 0 0 4px; color: inherit; }
+.devtools-inspect > :last-child { margin-bottom: 0; }
+.devtools-inspect code { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 12px; color: #edf2f7; overflow-wrap: anywhere; }
+.devtools-inspect .devtools-inspect-message { color: #edf2f7; }
+.devtools-inspect .devtools-inspect-verdict { color: #ffca86; font-weight: 600; }
+.devtools-inspect-list { margin: 0 0 4px; padding-left: 18px; }
+.devtools-inspect .devtools-inspect-note { color: #8fa3bf; font-style: italic; }
+.devtools-inspect-issue { margin-top: 2px; padding: 3px 9px; font-size: 12px; white-space: normal; text-align: left; }
+@media (max-width: 480px) { .devtools-inspect { margin-left: 8px; } }

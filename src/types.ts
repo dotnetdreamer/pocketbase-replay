@@ -12,6 +12,13 @@ export interface ReplayTransport {
   beacon?: (url: string, body: string) => boolean;
 }
 
+// The app's PocketBase JS SDK client, such as `new PocketBase(url)`.
+export interface PocketBaseClient {
+  send(path: string, options?: any): Promise<any>;
+  baseURL?: string;
+  baseUrl?: string;
+}
+
 export interface ReplayOptions {
   endpoint: string;
   apiKey?: string;
@@ -24,6 +31,11 @@ export interface ReplayOptions {
   assetBaseUrl?: string;
   initialActive?: boolean;
   subscribeActive?: (listener: (active: boolean) => void) => (() => void);
+  // Automatically upload a trigger-mode recording for captured errors. Explicit trigger() still works.
+  triggerOnError?: boolean;
+  // While recording, and while the server records PocketBase calls, each call this client sends is noted with its
+  // collection, action, status and counts, never the values sent or returned.
+  pocketbase?: PocketBaseClient;
 }
 
 export interface ReplayMetrics {
@@ -50,6 +62,7 @@ export interface ReplayController {
   refresh: () => Promise<void>;
   getMetrics: () => ReplayMetrics;
   getSessionContext: () => ReplaySessionContext | null;
+  trigger: (reason?: string) => Promise<ReplaySessionContext | null>;
 }
 
 export interface ReplaySessionContext { sessionId: string; token: string }
@@ -75,8 +88,18 @@ export interface ReplayChunk {
   apiKey?: string;
 }
 
+// Server-controlled extras for the recorder; never set by the host app.
+export interface RecorderOptions extends ReplayOptions {
+  recordNetwork?: boolean;
+  recordConsole?: boolean;
+  recordPocketbase?: boolean;
+  tracePocketbaseRequests?: boolean;
+  // The live recording's session ID, which a PocketBase call carries to the replay server, or null between triggers.
+  replaySession?: () => string | null;
+}
+
 export interface RecorderAdapter {
-  start: (emit: (event: ReplayEvent) => void, options: ReplayOptions) => (() => void) | undefined;
+  start: (emit: (event: ReplayEvent) => void, options: RecorderOptions) => (() => void) | undefined;
   snapshot: () => void;
 }
 
@@ -90,4 +113,5 @@ export interface ReplayRuntime {
   compressSync: (raw: string) => Uint8Array;
   subscribe?: (active: (active: boolean, unloading?: boolean) => void) => (() => void);
   validSelector?: (selector: string) => boolean;
+  subscribeErrors?: (listener: () => void) => (() => void);
 }

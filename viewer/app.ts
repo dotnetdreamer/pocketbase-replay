@@ -8,10 +8,15 @@ import {
   bucketLabel, LogVolumeRequest, OBSERVABILITY_RATE_DEFAULTS, PagedRecords, replayOffset, telemetryQuery, VOLUME_GROUPS, volumeColumns, volumeScale,
   type ErrorOccurrence, type Issue, type IssueAlert, type IssueStatus, type LogEntry, type LogVolume, type ObservabilitySettings, type VolumeColumn,
 } from './observability';
+import {
+  collectActivity, createDevtoolsPanel, createReplayOffset, diagnosticActivity, diagnosticsNotice, loadDiagnostics, loadExplanations, mergeActivity,
+  timelineMarks, withoutActivity, type TimelineMark,
+} from './devtools';
+import { installSourceMaps } from './stack';
 
 interface Session {
   sessionId: string; accountId: string; deviceId: string; platform: string; appVersion: string;
-  rooms: string[]; startedAt: number; compressedBytes: number; chunkCount: number;
+  rooms: string[]; startedAt: number; compressedBytes: number; chunkCount: number; trigger?: string;
 }
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -84,6 +89,14 @@ async function request(path: string, body?: unknown, method = body === undefined
 }
 
 const securityPanel = installSecurityPanel(request);
+const sourceMaps = installSourceMaps(request);
+// Activity below the player; each recording that loads points its seeks at itself. A page cached from before the
+// panel existed gets a detached one, so the dashboard still starts.
+let activitySeek: ((timestamp: number) => void) | undefined;
+const activityPanel = createDevtoolsPanel($('devtools') ?? document.createElement('section'), {
+  seek: (timestamp) => activitySeek?.(timestamp),
+  openIssue: (id) => run(async () => { await selectTab('issues'); await openIssue(id); }),
+});
 
 function markWatching(): void {
   for (const item of $('sessions').children) {
@@ -104,6 +117,8 @@ function showViewer(state: 'empty' | 'loading' | 'recording'): void {
 function closePlayer(): void {
   playbackGeneration++;
   watching = '';
+  activitySeek = undefined;
+  activityPanel.clear();
   player?.$destroy();
   player = undefined;
   $('player').replaceChildren();
@@ -156,6 +171,9 @@ async function loadSettings(): Promise<void> {
   // An older server has no selector settings.
   for (const key of ['mask_selector', 'block_selector']) field('settings', key).value = typeof settings[key] === 'string' ? settings[key] : '';
   field('settings', 'record_images').checked = settings.record_images === true;
+  // An older server has none of these; they stay off and whole sessions upload.
+  for (const key of ['record_network', 'record_console', 'record_pocketbase']) field('settings', key).checked = settings[key] === true;
+  field('settings', 'upload_mode').value = settings.upload_mode === 'trigger' ? 'trigger' : 'session';
   showModeFields();
 }
 
@@ -163,6 +181,9 @@ async function loadSettings(): Promise<void> {
 function showModeFields(): void {
   const mode = field('settings', 'mode').value;
   form('settings').querySelectorAll<HTMLElement>('[data-mode]').forEach((label) => { label.hidden = label.dataset.mode !== mode; });
+  $('upload-mode-hint').textContent = field('settings', 'upload_mode').value === 'trigger'
+    ? 'Each device keeps the last minute or two and uploads it after an error, a bug report or a trigger from your app, then records one more minute'
+    : 'Recorded devices upload as they go';
 }
 
 function selectors(name: string, label: string): string {
@@ -200,6 +221,11 @@ function sessionItem(session: Session): HTMLLIElement {
     line(session.deviceId, session.chunkCount ? `${(session.compressedBytes / 1024).toFixed(1)} KB` : 'No recording data'),
     line([session.platform, session.appVersion].filter(Boolean).join(' '), session.rooms.join(', ') || 'No room'),
   );
+  if (session.trigger) {
+    const trigger = line(`Uploaded after: ${session.trigger}`, '');
+    trigger.className = 'session-trigger';
+    open.append(trigger);
+  }
   open.addEventListener('click', () => run(() => watch(session.sessionId)));
   const remove = document.createElement('button');
   remove.type = 'button';
@@ -356,8 +382,9 @@ function showClock(timestamp: number): void {
   $('clock').textContent = text;
 }
 
-// A wide screen's panel gives the player its space; stacked, it gets the window below the recording's
-// details. rrweb's controls take 80 px of it, the clock line most of the rest.
+// A wide screen's panel gives the player its space, which clips anything larger, and its 320 px minimum keeps
+// the replay 240 px tall above rrweb's 80 px of controls. Stacked, it gets the window below the recording's
+// details: the controls take 80 px of it, the clock line most of the rest.
 function playerSize(): { width: number; height: number } {
   const box = $('player');
   const above = box.getBoundingClientRect().top - $('viewer').getBoundingClientRect().top;
@@ -408,7 +435,8 @@ async function loadRecording(sessionId: string, generation: number, timestamp?: 
   clockText = '';
   showViewer('recording');
   $('recording-title').textContent = `${session.accountId || 'Guest'} · ${session.deviceId}`;
-  $('recording-info').textContent = `${session.platform} · ${session.appVersion} · ${new Date(session.startedAt).toLocaleString()} · Canvas content is not recorded`;
+  $('recording-info').textContent = [session.platform, session.appVersion, new Date(session.startedAt).toLocaleString(),
+    session.trigger ? `Uploaded after: ${session.trigger}` : '', 'Canvas content is not recorded'].filter(Boolean).join(' · ');
   notes();
   const quiet = idle.reduce((sum, period) => sum + period.to - period.from, 0);
   $('idle').textContent = idle.length
@@ -419,21 +447,67 @@ async function loadRecording(sessionId: string, generation: number, timestamp?: 
     type: 5, timestamp: Math.round((period.start + period.end) / 2),
     data: { tag: `${period.background ? 'Recording paused' : 'Nothing recorded'} for ${duration(period.to - period.from)}`, payload: {} },
   }));
+  const start = shortened.events[0].timestamp;
+  // Activity keeps the device's clock times; marks and seeks move them onto the shortened timeline.
+  const offset = createReplayOffset(recovered.events, shortened.events);
+  const timeline = { position: offset, duration: shortened.events[shortened.events.length - 1].timestamp - start };
+  const recorded = collectActivity(recovered.events);
+  const activityMarks = timelineMarks(recorded, timeline);
+  const tags: Record<string, string> = Object.fromEntries(marks.map((mark) => [mark.data.tag, '#ffc38a']));
+  const markEvent = (mark: TimelineMark) => {
+    tags[mark.tag] = mark.color;
+    return { type: 5, timestamp: start + offset(mark.timestamp), data: { tag: mark.tag, payload: {} } };
+  };
+  const events = [...withoutActivity(shortened.events), ...marks, ...activityMarks.map(markEvent)];
+  // Shown before the player is built, so the player is sized to the space the panel leaves.
+  activityPanel.show(recorded, recovered.events[0].timestamp, offset);
   player = new rrwebPlayer({
     target: $('player'),
     props: {
-      events: [...shortened.events, ...marks] as any,
+      events: events as any,
       ...playerSize(),
       autoPlay: false, skipInactive: false, showWarning: false, showDebug: false,
       UNSAFE_replayCanvas: false,
-      tags: Object.fromEntries(marks.map((mark) => [mark.data.tag, '#ffc38a'])),
+      tags,
     },
   }) as ReplayPlayer;
   keepPlaying(player.getReplayer(), (error) => { if (generation === playbackGeneration) playbackError(error); });
-  const start = shortened.events[0].timestamp;
   player.addEventListener('ui-update-current-time', (value) => {
-    if (generation === playbackGeneration) showClock(start + (value as { payload: number }).payload);
+    if (generation !== playbackGeneration) return;
+    const at = start + (value as { payload: number }).payload;
+    showClock(at);
+    activityPanel.setTime(recordedAt(idle, at));
   });
+  // Without a second argument the player keeps playing, or stays paused, after the seek.
+  activitySeek = (at) => { if (generation === playbackGeneration) player?.goto(offset(at)); };
+  const current = () => generation === playbackGeneration;
+  // Stored entries and the server's explanations of PocketBase calls arrive separately; each redraws what is known.
+  let shown = recorded, shownNotice = '';
+  const redraw = () => { if (current() && player) activityPanel.show(shown, recovered.events[0].timestamp, offset, shownNotice); };
+  const explaining = loadExplanations(request, sessionId, recorded, current);
+  if (recorded.some((item) => item.explanation)) redraw();
+  void explaining.then(redraw).catch(() => { /* The calls stay shown as the app saw them. */ });
+  void Promise.all([
+    loadDiagnostics<ErrorOccurrence>(request, '/api/replay/errors', sessionId, current),
+    loadDiagnostics<LogEntry>(request, '/api/replay/logs', sessionId, current),
+  ]).then(([errors, logs]) => {
+    const diagnostics = diagnosticActivity(errors.items, logs.items);
+    if (generation !== playbackGeneration || !player || !diagnostics.length) return;
+    const activities = mergeActivity(recorded, diagnostics);
+    shown = activities;
+    shownNotice = diagnosticsNotice(errors, logs);
+    activityPanel.show(activities, recovered.events[0].timestamp, offset, shownNotice);
+    const added = timelineMarks(activities, { ...timeline, existing: activityMarks });
+    if (!added.length) return;
+    for (const mark of added) player.addEvent(markEvent(mark) as any);
+    // rrweb-player redraws its marks when its tags change; by the next task the replayer holds the new events.
+    // Svelte's $set takes any prop, though ReplayPlayer declares only the size.
+    window.setTimeout(() => {
+      if (generation !== playbackGeneration) return;
+      try { (player as unknown as { $set(props: { tags: Record<string, string> }): void } | undefined)?.$set({ tags: { ...tags } }); }
+      catch { /* The marks are a convenience; the panel already lists these rows. */ }
+    }, 0);
+  }).catch(() => { /* Playback never depends on diagnostics. */ });
   if (timestamp === undefined) player.play();
   else player.goto(replayOffset(recovered.events, shortened.events, timestamp), true);
   if (stacked()) $('viewer').scrollIntoView({ block: 'start' });
@@ -452,7 +526,7 @@ async function open(): Promise<void> {
 
 async function loadObservabilitySettings(): Promise<void> {
   const settings: ObservabilitySettings = await request('/api/replay/observability/settings');
-  for (const key of ['errors_enabled', 'logs_enabled', 'alerts_enabled'] as const) {
+  for (const key of ['errors_enabled', 'logs_enabled', 'alerts_enabled', 'server_errors'] as const) {
     field('observability-settings', key).checked = settings[key] === true;
   }
   for (const key of ['errors_retention_days', 'logs_retention_days', 'daily_limit_mb'] as const) {
@@ -576,6 +650,7 @@ function closeIssue(): void {
   $('issue-detail').hidden = true;
   $('no-issue').hidden = false;
   $('occurrence-detail').hidden = true;
+  sourceMaps.clearStack();
   $('occurrences').replaceChildren();
   for (const row of $('issues').children) {
     row.classList.remove('selected');
@@ -700,7 +775,7 @@ function showContext(target: string, entry: LogEntry, handled?: boolean): void {
 function showOccurrence(entry: ErrorOccurrence): void {
   selectedOccurrence = entry;
   $('occurrence-detail').hidden = false;
-  $('occurrence-stack').textContent = entry.stack || 'No stack trace supplied';
+  sourceMaps.showStack(entry);
   $('occurrence-attributes').textContent = JSON.stringify(entry.attributes ?? {}, null, 2);
   $('issue-logs').hidden = !entry.sessionId;
   showContext('occurrence-context', entry, entry.handled);
@@ -1112,6 +1187,7 @@ form('observability-settings').addEventListener('submit', (event) => {
       errors_enabled: field('observability-settings', 'errors_enabled').checked,
       logs_enabled: field('observability-settings', 'logs_enabled').checked,
       alerts_enabled: field('observability-settings', 'alerts_enabled').checked,
+      server_errors: field('observability-settings', 'server_errors').checked,
       errors_retention_days: Number(field('observability-settings', 'errors_retention_days').value),
       logs_retention_days: Number(field('observability-settings', 'logs_retention_days').value),
       daily_limit_mb: Number(field('observability-settings', 'daily_limit_mb').value),
@@ -1133,6 +1209,7 @@ form('observability-settings').addEventListener('submit', (event) => {
   }).finally(() => { submit.disabled = false; });
 });
 field('settings', 'mode').addEventListener('change', showModeFields);
+field('settings', 'upload_mode').addEventListener('change', showModeFields);
 $('erase-cancel').addEventListener('click', () => $<HTMLDialogElement>('erase-dialog').close());
 form('settings').addEventListener('submit', (event) => {
   event.preventDefault();
@@ -1149,6 +1226,10 @@ form('settings').addEventListener('submit', (event) => {
       mask_selector: selectors('mask_selector', 'Mask text in'),
       block_selector: selectors('block_selector', 'Block elements'),
       record_images: field('settings', 'record_images').checked,
+      record_network: field('settings', 'record_network').checked,
+      record_console: field('settings', 'record_console').checked,
+      record_pocketbase: field('settings', 'record_pocketbase').checked,
+      upload_mode: field('settings', 'upload_mode').value,
     };
     if (!confirm('Save these recording settings? Open apps pick them up within a minute.')) return;
     await request('/api/replay/settings', settings);

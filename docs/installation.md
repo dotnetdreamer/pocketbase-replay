@@ -29,6 +29,10 @@ npm pack
 Then install the generated tarball in your frontend project with
 `npm install /path/to/pocketbase-replay-VERSION.tgz`
 
+A Flutter app uses the [Flutter plugin](../plugins/flutter/README.md#install)
+instead, added to its `pubspec.yaml` from this repository. The server setup
+below is the same for both
+
 ## Existing PocketBase
 
 Back up your database and stop PocketBase before installing the extension
@@ -46,16 +50,28 @@ The installer adds these files without replacing your hooks, migrations or data:
 pb_hooks/700_replay.pb.js
 pb_hooks/lib/replay.js
 pb_hooks/lib/replay-core.js
+pb_hooks/705_ingestion_security.pb.js
+pb_hooks/lib/ingestion-security.js
+pb_hooks/lib/ingestion-limits.js
 pb_hooks/710_observability.pb.js
 pb_hooks/lib/observability.js
 pb_hooks/lib/observability-core.js
+pb_hooks/715_sourcemaps.pb.js
+pb_hooks/lib/sourcemaps.js
+pb_hooks/lib/sourcemap-core.js
+pb_hooks/720_pocketbase.pb.js
+pb_hooks/lib/pocketbase.js
+pb_hooks/lib/pocketbase-core.js
 pb_hooks/replay-dash/
 pb_migrations/1795600000_replay.js
 pb_migrations/1795600002_observability.js
+pb_migrations/1795600003_replay_trigger.js
+pb_migrations/1795600004_sourcemaps.js
 ```
 
 Restart PocketBase to create `replay_settings`, `replay_sessions`,
-`replay_chunks`, and the error, log and alert collections
+`replay_chunks`, the error, log and alert collections, and the source map
+collections
 
 The migration refuses an existing collection with a conflicting name and never
 imports a full database schema
@@ -79,6 +95,9 @@ The installer refuses to overwrite a file that differs
 
 The error and log migration adds collections without changing existing
 recordings. Both features start disabled, including on upgraded servers
+
+The source map migration adds its own collections. Until maps are uploaded,
+errors group exactly as before
 
 ## Dedicated replay database
 
@@ -131,6 +150,39 @@ for your app
 Connect the [client](integration.md) and watch a new recording to check the
 result
 
+## Source map uploads
+
+To let build jobs upload source maps for readable stack traces, set
+`REPLAY_SOURCEMAP_KEY` on the replay server to a random secret of 32 to 512
+characters, for example from `openssl rand -hex 32`. Compose passes it through
+from your shell or `.env`:
+
+```text
+REPLAY_SOURCEMAP_KEY=your-secret
+```
+
+With it unset, only a superuser can upload maps. See
+[source maps](observability.md#source-maps) for the CLI and the limits
+
+## Request log links
+
+Set `REPLAY_TRACE_REQUESTS=on` to link the [PocketBase calls](integration.md#pocketbase-calls)
+apps record to PocketBase's request log, for fuller explanations in the player.
+It adds a small hook to PocketBase's record, auth, batch and realtime
+subscription requests. Overhead depends on your server and workload; no
+middleware is installed around long-lived realtime streams. It is off unless set:
+
+```text
+REPLAY_TRACE_REQUESTS=on
+```
+
+The replay configuration then tells clients to add a `__replayRequest` query
+marker alongside `X-Replay-Request`. The marker contains only the random call
+ID and optional recording ID, so it can link failures that happen before the
+tracing hook runs. Clients omit it unless their latest configuration enables
+tracing; changes take effect at their next settings check. See
+[request log links](integration.md#link-calls-to-pocketbases-request-log)
+
 ## Behind a reverse proxy
 
 Use HTTPS for remote deployments
@@ -160,6 +212,11 @@ the rightmost IP, which is the address your proxy saw
 
 The header name may contain only letters, digits and hyphens; an invalid value
 is ignored with a `replay:` warning in the log
+
+A proxy that answers CORS itself should allow the `X-Replay-Request` request
+header, so apps on another origin, such as Capacitor apps, can link their
+PocketBase calls to PocketBase's request log. An app checks once and leaves the
+header out when it is refused, so its own calls never fail because of it
 
 Use `CF-Connecting-IP` behind Cloudflare's proxy
 

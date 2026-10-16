@@ -6,10 +6,20 @@ const vm = require('node:vm');
 const observability = require('../../pb_hooks/lib/observability.js');
 const hash = value => createHash('sha256').update(value).digest('hex');
 const now = Date.now();
+// PocketBase 0.39.9's request and app log table in auxiliary.db, copied from a real pb_data.
+const LOGS_SCHEMA = [
+  "CREATE TABLE `_logs` (`id` TEXT PRIMARY KEY DEFAULT ('r'||lower(hex(randomblob(7)))) NOT NULL, `level` INTEGER DEFAULT 0 NOT NULL, " +
+    "`message` TEXT DEFAULT \"\" NOT NULL, `data` JSON DEFAULT \"{}\" NOT NULL, `created` TEXT DEFAULT (strftime('%Y-%m-%d %H:%M:%fZ')) NOT NULL)",
+  'CREATE INDEX idx_logs_level on `_logs` (`level`)',
+  'CREATE INDEX idx_logs_message on `_logs` (`message`)',
+  "CREATE INDEX idx_logs_created_hour on `_logs` (strftime('%Y-%m-%d %H:00:00', `created`))",
+];
 
 function fixture() {
   const database = new DatabaseSync(':memory:');
   database.exec('PRAGMA foreign_keys = ON');
+  const auxiliary = new DatabaseSync(':memory:');
+  for (const sql of LOGS_SCHEMA) auxiliary.exec(sql);
   const collections = new Map();
   const store = new Map();
   let sequence = 0;
@@ -23,15 +33,25 @@ function fixture() {
     getInt(key) { return this.getFloat(key); }
     getBool(key) { return !!this.data[key]; }
   }
-  function statement(sql, params) {
-    const prepared = database.prepare(sql.replace(/\{:(\w+)\}/g, '$$$1'));
+  function statement(sql, params, target) {
+    const prepared = (target || database).prepare(sql.replace(/\{:(\w+)\}/g, '$$$1'));
     const bound = {};
     for (const [key, value] of Object.entries(params || {})) if (sql.includes('{:' + key + '}')) bound[key] = typeof value === 'boolean' ? Number(value) : value;
     return { prepared, bound };
   }
-  function query(sql, params, all) {
-    const { prepared, bound } = statement(sql, params);
+  function query(sql, params, all, target) {
+    const { prepared, bound } = statement(sql, params, target);
     return all ? prepared.all(bound) : prepared.get(bound);
+  }
+  function builder(target) {
+    return { newQuery: sql => {
+      const bound = params => ({
+        one: result => Object.assign(result, query(sql, params, false, target)),
+        all: rows => { for (const data of query(sql, params, true, target)) rows.push(Object.assign(new global.DynamicModel({}), data)); },
+        execute: () => { const { prepared, bound: values } = statement(sql, params, target); return prepared.run(values); },
+      });
+      return Object.assign(bound({}), { bind: bound });
+    } };
   }
   function records(name, where, sort, limit, offset, params) {
     const order = sort ? ' ORDER BY ' + sort.split(',').map(value => value.startsWith('-') ? value.slice(1) + ' DESC' : value + ' ASC').join(',') : '';
@@ -41,8 +61,10 @@ function fixture() {
   const app = {
     store: () => ({ get: key => store.get(key), set: (key, value) => store.set(key, value) }),
     findCollectionByNameOrId: name => { if (!collections.has(name)) throw new Error('Missing collection ' + name); return collections.get(name); },
+    findCachedCollectionByNameOrId: name => app.findCollectionByNameOrId(name),
     findRecordsByFilter: records,
-    findRecordById: (name, id) => { const rows = records(name, 'id = {:id}', '', 1, 0, { id }); if (!rows.length) throw new Error('Not found'); return rows[0]; },
+    // PocketBase's own message for a missing record.
+    findRecordById: (name, id) => { const rows = records(name, 'id = {:id}', '', 1, 0, { id }); if (!rows.length) throw new Error('sql: no rows in result set'); return rows[0]; },
     findFirstRecordByData: (name, key, value) => { const rows = records(name, key + ' = {:value}', '', 1, 0, { value }); if (!rows.length) throw new Error('Not found'); return rows[0]; },
     findAuthRecordByToken: token => { if (token !== 'alice-token') throw new Error('Invalid auth'); return { id: 'alice', isSuperuser: () => false, getBool: () => false }; },
     runInTransaction: fn => {
@@ -74,14 +96,8 @@ function fixture() {
       if (item.fields) { database.exec('DROP TABLE ' + item.name); collections.delete(item.name); return; }
       database.prepare('DELETE FROM ' + item.collection.name + ' WHERE id=?').run(item.id);
     },
-    db: () => ({ newQuery: sql => {
-      const bound = params => ({
-        one: result => Object.assign(result, query(sql, params)),
-        all: rows => { for (const data of query(sql, params, true)) rows.push(Object.assign(new global.DynamicModel({}), data)); },
-        execute: () => { const { prepared, bound: values } = statement(sql, params); return prepared.run(values); },
-      });
-      return Object.assign(bound({}), { bind: bound });
-    } }),
+    db: () => builder(database),
+    auxDB: () => builder(auxiliary),
     settings: () => ({ meta: { appURL: 'https://replay.test/' } }),
     recordQuery: name => {
       let predicate = { sql: '1=1', params: {} }; let order; let limit; let offset;
@@ -123,14 +139,23 @@ function fixture() {
   const metadata = { deviceId: 'device', accountId: 'alice', authToken: 'alice-token', platform: 'web', appVersion: '1.0' };
   function enable(value) { return observability.saveSettings(event({ errors_enabled: true, logs_enabled: true, ...value })); }
   function token() { return observability.publicConfig(event(metadata)).token; }
+  // A PocketBase log row, written as its batch writer does: created as "2026-10-15 20:13:41.304Z".
+  let logs = 0;
+  function log(row) {
+    const value = { id: 'log' + String(++logs).padStart(12, '0'), level: 8, message: '', data: {}, created: Date.now(), ...row };
+    const created = typeof value.created === 'number' ? new Date(value.created).toISOString().replace('T', ' ') : value.created;
+    auxiliary.prepare('INSERT INTO _logs (id, level, message, data, created) VALUES (?, ?, ?, ?, ?)')
+      .run(value.id, value.level, value.message, typeof value.data === 'string' ? value.data : JSON.stringify(value.data), created);
+    return value.id;
+  }
   return {
-    app, event, metadata, enable, token, database, collections, records, store, webhooks,
+    app, event, metadata, enable, token, database, auxiliary, log, collections, records, store, webhooks,
     clearDailyBudget: () => database.prepare('DELETE FROM replay_settings WHERE key = ?').run('observability:daily-bytes'),
     dailyBudget: () => {
       const rows = records('replay_settings', "key = 'observability:daily-bytes'", '', 1);
       return rows.length ? JSON.parse(rows[0].getString('value')) : null;
     },
-    webhookAnswers: value => { webhookStatus = value; }, close: () => database.close(),
+    webhookAnswers: value => { webhookStatus = value; }, close: () => { database.close(); auxiliary.close(); },
   };
 }
 
