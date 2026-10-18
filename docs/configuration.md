@@ -222,3 +222,9 @@ Network requests and console messages need **Record network requests** and **Rec
 Calls of a [PocketBase client the app passes in](integration.md#pocketbase-calls) are listed under **PocketBase**, named by collection and action, such as `orders.create`, with their status, item count and refused fields. Failed calls are marked on the timeline. Selecting one opens its details under the row: what the app saw and, when the replay server is the app's own PocketBase, the server's side, such as the API rule that refused it or the hook error behind it
 
 The explanations come from the collection's current rules, a current lookup of the record and, with `REPLAY_TRACE_REQUESTS=on`, PocketBase's request log. Inferences are marked as likely, and rules may have changed since the recording. Refused fields show names and codes; arbitrary validation messages are omitted. See [PocketBase calls](integration.md#pocketbase-calls) for the opt-in request-log marker and tracing overhead
+
+## Dashboard links
+
+The address names what the dashboard shows, such as `/dash/replay#issue=dw8gomt31va07xu`, so reloading the page or sharing the address opens the same recording, issue or log again, after signing in when needed. A recording opened at a moment, for example with **Watch replay**, keeps that moment, and an issue keeps an occurrence chosen in it. The address changes in place rather than adding to the browser history, so Back still leaves the dashboard
+
+A recording, issue or log opened from a link, an alert or another tab is highlighted in its list, which loads up to 10 more pages to reach it, and loads again first when it arrived after the list did. When the list still does not hold it, for example because the filters leave it out, the list gives way to that one row and a note, with **Back to the list** to return to the list while it stays open

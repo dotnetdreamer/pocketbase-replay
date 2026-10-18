@@ -70,21 +70,6 @@ export function agentSetups(url: string, key: string): AgentSetup[] {
   ];
 }
 
-// A dashboard link an agent was given: #session=<id>&at=<ms>, #issue=<id> or #log=<id>.
-export type DashboardLink = { kind: 'session'; id: string; at?: number } | { kind: 'issue' | 'log'; id: string };
-
-export function parseDashboardLink(hash: string): DashboardLink | undefined {
-  const values = new URLSearchParams(hash.replace(/^#/, ''));
-  const id = (name: string) => { const value = values.get(name) ?? ''; return /^[a-z0-9]{15}$/.test(value) ? value : ''; };
-  if (id('session')) {
-    const at = Number(values.get('at'));
-    return Number.isSafeInteger(at) && at > 0 ? { kind: 'session', id: id('session'), at } : { kind: 'session', id: id('session') };
-  }
-  if (id('issue')) return { kind: 'issue', id: id('issue') };
-  if (id('log')) return { kind: 'log', id: id('log') };
-  return undefined;
-}
-
 export function scopeText(scopes: AgentScope[]): string {
   const names = scopes.map((scope) => SCOPE_NAMES[scope] ?? scope);
   const text = names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}` : names[0] ?? 'nothing';

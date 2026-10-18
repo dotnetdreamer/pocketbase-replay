@@ -254,6 +254,7 @@
         </form>
         <p class="account-tools"><button type="button" id="erase-account" class="danger">Delete recordings, errors and logs for the account in the filter</button></p>
         <p id="session-count" class="session-count"></p>
+        <div id="sessions-focus" hidden><div class="list-focus"><p id="sessions-focus-note" role="status"></p><button id="sessions-focus-back" type="button" class="secondary">Back to the list</button></div><ul id="sessions-focus-row" class="session-list"></ul></div>
         <div id="session-scroll" class="session-scroll">
           <ul id="sessions" class="session-list"></ul>
           <div id="sessions-end" class="sessions-end"><span id="sessions-state"></span><button type="button" id="load-more" hidden>Load more</button></div>
@@ -299,7 +300,8 @@
             <button id="alerts-more" type="button" class="secondary" hidden>Load more alerts</button>
           </details>
           <p id="issue-count" class="session-count"></p>
-          <div class="telemetry-scroll"><ul id="issues" class="telemetry-list"></ul><p id="issues-state" class="list-state" role="status"></p><button id="issues-more" type="button" hidden>Load more issues</button></div>
+          <div id="issues-focus" hidden><div class="list-focus"><p id="issues-focus-note" role="status"></p><button id="issues-focus-back" type="button" class="secondary">Back to the list</button></div><ul id="issues-focus-row" class="telemetry-list"></ul></div>
+          <div id="issues-scroll" class="telemetry-scroll"><ul id="issues" class="telemetry-list"></ul><p id="issues-state" class="list-state" role="status"></p><button id="issues-more" type="button" hidden>Load more issues</button></div>
         </section>
         <section class="card telemetry-detail" aria-label="Issue details">
           <div id="no-issue" class="no-recording"><h2>No issue open</h2><p>Choose an issue to review its errors</p></div>
@@ -336,7 +338,8 @@
             <button type="submit">Find logs</button>
           </form>
           <p id="log-count" class="session-count"></p>
-          <div class="telemetry-scroll"><ul id="logs" class="telemetry-list"></ul><p id="logs-state" class="list-state" role="status"></p><button id="logs-more" type="button" hidden>Load more logs</button></div>
+          <div id="logs-focus" hidden><div class="list-focus"><p id="logs-focus-note" role="status"></p><button id="logs-focus-back" type="button" class="secondary">Back to the list</button></div><ul id="logs-focus-row" class="telemetry-list"></ul></div>
+          <div id="logs-scroll" class="telemetry-scroll"><ul id="logs" class="telemetry-list"></ul><p id="logs-state" class="list-state" role="status"></p><button id="logs-more" type="button" hidden>Load more logs</button></div>
         </section>
         <section class="card telemetry-detail" aria-label="Log volume and details">
           <p id="log-volume-state" class="list-state" role="status" aria-live="polite"></p>

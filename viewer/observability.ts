@@ -132,6 +132,8 @@ export class PagedRecords<T extends { id: string }> {
   query = new URLSearchParams();
   readonly items = new Map<string, T>();
   private loadingGeneration = -1;
+  private loaded = Promise.resolve();
+  private settle = () => {};
 
   get loading(): boolean { return this.loadingGeneration === this.generation; }
   get more(): boolean { return this.page < this.totalPages; }
@@ -147,9 +149,15 @@ export class PagedRecords<T extends { id: string }> {
 
   begin(refresh = false): number | undefined {
     if (this.loading || (!refresh && !this.more)) return;
+    // A page still loading for an older search no longer keeps anyone waiting.
+    this.settle();
     this.loadingGeneration = this.generation;
+    this.loaded = new Promise((resolve) => { this.settle = resolve; });
     return this.generation;
   }
+
+  // Resolves once the page loading for this search is in, or at once when none is.
+  settled(): Promise<void> { return this.loading ? this.loaded : Promise.resolve(); }
 
   accept(result: PageResult<T>, generation: number, keepPage = false): boolean {
     if (generation !== this.generation) return false;
@@ -161,6 +169,8 @@ export class PagedRecords<T extends { id: string }> {
   }
 
   finish(generation: number): void {
-    if (this.loadingGeneration === generation) this.loadingGeneration = -1;
+    if (this.loadingGeneration !== generation) return;
+    this.loadingGeneration = -1;
+    this.settle();
   }
 }

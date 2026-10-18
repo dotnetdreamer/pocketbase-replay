@@ -4,7 +4,8 @@ import './style.css';
 import { dayBound, IDLE_KEPT_MS, recordedAt, recoverEvents, shortenIdle, type IdlePeriod, type StoredChunk } from './decode';
 import { keepPlaying } from './player';
 import { installSecurityPanel } from './security';
-import { installAgentsPanel, parseDashboardLink } from './agents';
+import { installAgentsPanel } from './agents';
+import { dashboardHash, findInList, newerThan, parseDashboardLink, type DashboardLink, type DashboardTab, type ListPosition } from './links';
 import {
   bucketLabel, LogVolumeRequest, OBSERVABILITY_RATE_DEFAULTS, PagedRecords, replayOffset, telemetryQuery, VOLUME_GROUPS, volumeColumns, volumeScale,
   type ErrorOccurrence, type Issue, type IssueAlert, type IssueStatus, type LogEntry, type LogVolume, type ObservabilitySettings, type VolumeColumn,
@@ -30,17 +31,30 @@ let totalPages = 1;
 let totalItems = 0;
 let listGeneration = 0;
 let loadingList = -1;
-const listed = new Set<string>();
+let listLoad = Promise.resolve();
+const listed = new Map<string, Session>();
 type ReplayPlayer = rrwebPlayer & { $destroy(): void; $set(size: { width: number; height: number }): void };
 let player: ReplayPlayer | undefined;
 let playbackGeneration = 0;
 let watching = '';
+let watchingAt: number | undefined;
+// The last recording loaded, for its row when the list does not hold it.
+let watchedSession: Session | undefined;
 let idle: IdlePeriod[] = [];
 let recordingGaps = 0;
 let playbackErrors = 0;
 let clockText = '';
-type DashboardTab = 'sessions' | 'issues' | 'logs';
 let activeTab: DashboardTab = 'sessions';
+// What the address names besides the open recording: the issue and log being opened or shown, and an occurrence
+// chosen in the issue, which otherwise opens at its newest.
+let shownIssue = '';
+let chosenOccurrence = '';
+let shownLog = '';
+// The address is written only once a signed-in dashboard has read the one it was opened with.
+let routing = false;
+let linkQueued = false;
+// A record opened from outside its list that the list does not hold, shown on its own while it stays open.
+const focus: Partial<Record<DashboardTab, { id: string; note: string }>> = {};
 const issues = new PagedRecords<Issue>();
 const logs = new PagedRecords<LogEntry>();
 const alerts = new PagedRecords<IssueAlert>();
@@ -97,7 +111,7 @@ const sourceMaps = installSourceMaps(request);
 let activitySeek: ((timestamp: number) => void) | undefined;
 const activityPanel = createDevtoolsPanel($('devtools') ?? document.createElement('section'), {
   seek: (timestamp) => activitySeek?.(timestamp),
-  openIssue: (id) => run(async () => { await selectTab('issues'); await openIssue(id); }),
+  openIssue: (id) => run(() => showIssue(id)),
 });
 
 function markWatching(): void {
@@ -107,6 +121,168 @@ function markWatching(): void {
     const open = item.querySelector('.session-open');
     if (current) open?.setAttribute('aria-current', 'true'); else open?.removeAttribute('aria-current');
   }
+  renderFocus('sessions');
+}
+
+function currentLink(): DashboardLink {
+  if (activeTab === 'issues') return shownIssue ? { kind: 'issue', id: shownIssue, occurrence: chosenOccurrence } : { kind: 'tab', tab: 'issues' };
+  if (activeTab === 'logs') return shownLog ? { kind: 'log', id: shownLog } : { kind: 'tab', tab: 'logs' };
+  return watching ? { kind: 'session', id: watching, at: watchingAt } : { kind: 'tab', tab: 'sessions' };
+}
+
+// The address names what the current tab shows, so a reload or a copied address opens it again. It is replaced
+// rather than added to the history, so Back still leaves the dashboard. Changes made together write it once.
+function syncLink(): void {
+  if (!routing || linkQueued) return;
+  linkQueued = true;
+  queueMicrotask(() => {
+    linkQueued = false;
+    if (!routing || !token) return;
+    const hash = dashboardHash(currentLink());
+    if (hash === location.hash) return;
+    try { history.replaceState(history.state, '', `${location.pathname}${location.search}${hash}`); } catch { /* Safari limits how often; the next change writes it. */ }
+  });
+}
+
+function openId(tab: DashboardTab): string {
+  return tab === 'sessions' ? watching : tab === 'issues' ? shownIssue : shownLog;
+}
+
+function rowOf(list: string, id: string): HTMLElement | undefined {
+  return (Array.from($(list).children) as HTMLElement[]).find((row) => (row.dataset.session ?? row.dataset.record) === id);
+}
+
+const LIST_PARTS: Record<DashboardTab, string[]> = { sessions: ['session-count', 'session-scroll'], issues: ['issue-count', 'issues-scroll'], logs: ['log-count', 'logs-scroll'] };
+
+// Shows the open record on its own in place of its list while the list does not hold it. A page cached from
+// before this existed keeps its list.
+function renderFocus(tab: DashboardTab): void {
+  if (!document.getElementById(`${tab}-focus`)) return;
+  const id = openId(tab);
+  const shown = !!id && focus[tab]?.id === id && !lists[tab].has(id);
+  let row: HTMLLIElement | undefined;
+  if (shown && tab === 'sessions' && watchedSession?.sessionId === id) {
+    row = sessionItem(watchedSession);
+    row.classList.add('watching');
+    row.querySelector('.session-open')?.setAttribute('aria-current', 'true');
+  } else if (shown && tab === 'issues' && selectedIssue?.id === id) row = issueRow(selectedIssue, true);
+  else if (shown && tab === 'logs' && selectedLog?.id === id) row = logRow(selectedLog, true);
+  // While the same record opens again, its row stays until the new one is in.
+  else if (shown) return;
+  $(`${tab}-focus`).hidden = !row;
+  for (const part of LIST_PARTS[tab]) $(part).hidden = !!row;
+  $(`${tab}-focus-note`).textContent = row ? focus[tab]!.note : '';
+  $(`${tab}-focus-row`).replaceChildren(...(row ? [row] : []));
+}
+
+// Scrolls the row's list, not the page, so the row shows.
+function showRow(row: HTMLElement | undefined): void {
+  const box = row?.closest<HTMLElement>('.session-scroll, .telemetry-scroll, .occurrence-list');
+  if (!row || !box) return;
+  const bounds = row.getBoundingClientRect();
+  const top = bounds.top - box.getBoundingClientRect().top - box.clientTop + box.scrollTop;
+  if (top < box.scrollTop || top + bounds.height > box.scrollTop + box.clientHeight) box.scrollTop = top - Math.max(0, (box.clientHeight - bounds.height) / 2);
+}
+
+// On a narrow screen the list sits above what is open, so a list that changes height would move it.
+function steady(element: HTMLElement, change: () => void): void {
+  const before = element.getBoundingClientRect().top;
+  change();
+  const moved = element.getBoundingClientRect().top - before;
+  if (moved && stacked()) window.scrollBy(0, moved);
+}
+
+// The list behind each tab, as reveal() pages through it. Each is sorted newest first, as on the server.
+const lists: Record<DashboardTab, {
+  noun: string;
+  has(id: string): boolean;
+  newest(): ListPosition | undefined;
+  open(): ListPosition | undefined;
+  more(): boolean;
+  count(): number;
+  filtered(): boolean;
+  version(): number;
+  next(): Promise<void>;
+  reload(): Promise<void>;
+}> = {
+  sessions: {
+    noun: 'sessions',
+    has: (id) => listed.has(id),
+    newest: () => { const first: Session | undefined = listed.values().next().value; return first && [first.startedAt, first.sessionId]; },
+    open: () => watchedSession?.sessionId === watching ? [watchedSession.startedAt, watchedSession.sessionId] : undefined,
+    more: () => page < totalPages,
+    count: () => listed.size,
+    filtered: () => filters.toString() !== '',
+    version: () => listGeneration,
+    next: () => loadMore(),
+    reload: () => { resetList(); $('session-scroll').scrollTop = 0; return loadMore(); },
+  },
+  issues: {
+    noun: 'issues',
+    has: (id) => issues.items.has(id),
+    newest: () => { const first: Issue | undefined = issues.items.values().next().value; return first && [first.lastSeen, first.id]; },
+    open: () => selectedIssue && [selectedIssue.lastSeen, selectedIssue.id],
+    more: () => issues.more,
+    count: () => issues.items.size,
+    filtered: () => issues.query.toString() !== '',
+    version: () => issues.generation,
+    next: () => issues.loading ? issues.settled() : loadIssues(),
+    reload: () => { issues.reset(); renderIssues(); return loadIssues(); },
+  },
+  logs: {
+    noun: 'logs',
+    has: (id) => logs.items.has(id),
+    newest: () => { const first: LogEntry | undefined = logs.items.values().next().value; return first && [first.timestamp, first.id]; },
+    open: () => selectedLog && [selectedLog.timestamp, selectedLog.id],
+    more: () => logs.more,
+    count: () => logs.items.size,
+    filtered: () => logs.query.toString() !== '',
+    version: () => logs.generation,
+    next: () => logs.loading ? logs.settled() : loadLogs(),
+    reload: async () => { logs.reset(); renderLogs(); await Promise.all([loadLogs(), loadVolume(logs.query)]); },
+  },
+};
+const REVEAL_PAGES = 10;
+
+// A record opened from outside its list, such as by a link or from an error, is highlighted in the list, which
+// loads up to REVEAL_PAGES more pages to reach it, and loads again first when the record is newer than all it
+// holds. A list that still does not hold it gives way to the record on its own, with a way back to the list.
+async function reveal(tab: DashboardTab, id: string): Promise<void> {
+  const list = lists[tab];
+  let version = list.version();
+  const current = () => openId(tab) === id && list.version() === version;
+  if (!current()) return;
+  const newest = list.newest(), open = list.open();
+  if (!list.has(id) && (!newest || (open && newerThan(open, newest)))) {
+    const reloading = list.reload();
+    version = list.version();
+    await reloading;
+    if (!current()) return;
+  }
+  const found = await findInList(list, id, REVEAL_PAGES, current);
+  if (found === undefined) return;
+  if (found) delete focus[tab];
+  else focus[tab] = { id, note: list.more() ? `Not in the first ${list.count()} ${list.noun}` : list.filtered() ? 'Not in the list with these filters' : 'Not in the list' };
+  steady($(tab === 'sessions' ? 'viewer' : tab === 'issues' ? 'issue-detail' : 'log-detail'), () => renderFocus(tab));
+  if (found) showRow(rowOf(tab, id));
+}
+
+// Opens a record from outside its list, then finds it there.
+async function showSession(id: string, at?: number): Promise<void> {
+  void selectTab('sessions', false);
+  await watch(id, at);
+  await reveal('sessions', id);
+}
+
+async function showIssue(id: string, occurrence = ''): Promise<void> {
+  // The list and the issue load together; the list's search starts first, so it cannot close the issue.
+  await Promise.all([selectTab('issues'), openIssue(id, occurrence)]);
+  await reveal('issues', id);
+}
+
+async function showLog(id: string): Promise<void> {
+  await Promise.all([selectTab('logs'), openLog(id)]);
+  await reveal('logs', id);
 }
 
 function showViewer(state: 'empty' | 'loading' | 'recording'): void {
@@ -119,6 +295,8 @@ function showViewer(state: 'empty' | 'loading' | 'recording'): void {
 function closePlayer(): void {
   playbackGeneration++;
   watching = '';
+  watchingAt = undefined;
+  syncLink();
   activitySeek = undefined;
   activityPanel.clear();
   player?.$destroy();
@@ -138,11 +316,15 @@ function resetList(): void {
   listState();
 }
 
+// The address stays, so signing in again opens what it names.
 function signOut(): void {
   stopAlertRefresh();
   readAlerts.clear();
   acknowledgingAlerts.clear();
   token = '';
+  routing = false;
+  watchedSession = undefined;
+  for (const tab of ['sessions', 'issues', 'logs'] as const) delete focus[tab];
   try { sessionStorage.removeItem('pocketbase-replay-admin'); } catch { /* Memory-only login. */ }
   closePlayer();
   resetList();
@@ -250,9 +432,10 @@ function listState(): void {
     : `${totalItems} session${totalItems === 1 ? '' : 's'}${more ? `, ${listed.size} loaded` : ''}`;
 }
 
+// A list out of sight, on another tab or while one session is shown on its own, loads no more by itself.
 function nearListEnd(): boolean {
   const box = $('session-scroll');
-  return box.scrollHeight - box.scrollTop - box.clientHeight < 300;
+  return box.clientHeight > 0 && box.scrollHeight - box.scrollTop - box.clientHeight < 300;
 }
 
 async function loadPage(number: number, generation: number): Promise<void> {
@@ -266,16 +449,22 @@ async function loadPage(number: number, generation: number): Promise<void> {
   for (const session of result.items as Session[]) {
     // A session started since the first page pushes the others down, so one can come round again.
     if (listed.has(session.sessionId)) continue;
-    listed.add(session.sessionId);
+    listed.set(session.sessionId, session);
     $('sessions').append(sessionItem(session));
   }
   markWatching();
 }
 
-// The list loads the server's 30-session pages one at a time as it is scrolled.
-async function loadMore(): Promise<void> {
+// The list loads the server's 30-session pages one at a time as it is scrolled. A call while a page loads waits
+// for that page.
+function loadMore(): Promise<void> {
+  if (loadingList !== listGeneration) listLoad = nextPage();
+  return listLoad;
+}
+
+async function nextPage(): Promise<void> {
   const generation = listGeneration;
-  if (loadingList === generation || page >= totalPages) return;
+  if (page >= totalPages) return;
   loadingList = generation;
   listState();
   try {
@@ -296,6 +485,7 @@ async function search(): Promise<void> {
     query.set(key, key === 'from' || key === 'to' ? String(dayBound(value, key === 'to')) : value);
   }
   filters = query;
+  delete focus.sessions;
   resetList();
   $('session-scroll').scrollTop = 0;
   await loadMore();
@@ -307,7 +497,8 @@ async function removeSession(session: Session, item: HTMLElement): Promise<void>
   await request(`/api/replay/sessions/${encodeURIComponent(session.sessionId)}`, undefined, 'DELETE');
   if (watching === session.sessionId) closePlayer();
   item.remove();
-  listed.delete(session.sessionId);
+  // A session shown on its own was not in the list, so the list stays as it is.
+  if (!listed.delete(session.sessionId)) { status('Recording deleted'); return; }
   totalItems = Math.max(0, totalItems - 1);
   listState();
   status('Recording deleted');
@@ -402,6 +593,8 @@ function stacked(): boolean {
 async function watch(sessionId: string, timestamp?: number): Promise<void> {
   closePlayer();
   watching = sessionId;
+  watchingAt = timestamp;
+  syncLink();
   markWatching();
   const generation = playbackGeneration;
   showViewer('loading');
@@ -430,6 +623,7 @@ async function loadRecording(sessionId: string, generation: number, timestamp?: 
     }
     if (part >= data.totalPages) break;
   }
+  watchedSession = session;
   const recovered = recoverEvents(chunks);
   const shortened = shortenIdle(recovered.events);
   idle = shortened.idle;
@@ -529,19 +723,27 @@ async function open(): Promise<void> {
   try { await follow(); } catch (error) { status(error instanceof Error ? error.message : 'Could not open the link', true); }
 }
 
-// Opens what a link from an AI agent points at: a recording at a moment, an issue or a log.
+// Opens what the address names, from a reload, a bookmark or a link from an AI agent: a recording at a moment, an
+// issue or a log, or a tab.
 async function follow(): Promise<void> {
-  const target = parseDashboardLink(location.hash);
-  if (!target || !token) return;
+  if (!token) return;
+  routing = true;
+  const target: DashboardLink | undefined = parseDashboardLink(location.hash) ?? (location.hash ? undefined : { kind: 'tab', tab: 'sessions' });
+  // An address the dashboard cannot read gives way to one for what it shows.
+  if (!target) { syncLink(); return; }
   if (target.kind === 'session') {
-    await selectTab('sessions', false);
-    await watch(target.id, target.at);
+    if (watching === target.id && watchingAt === target.at) void selectTab('sessions', false);
+    else await showSession(target.id, target.at);
   } else if (target.kind === 'issue') {
-    await selectTab('issues');
-    await openIssue(target.id);
+    if (shownIssue === target.id && chosenOccurrence === (target.occurrence ?? '')) await selectTab('issues');
+    else await showIssue(target.id, target.occurrence);
+  } else if (target.kind === 'log') {
+    if (shownLog === target.id) await selectTab('logs');
+    else await showLog(target.id);
   } else {
-    await selectTab('logs');
-    await openLog(target.id);
+    // A tab named on its own has nothing open on it.
+    if (target.tab === 'sessions') closePlayer(); else if (target.tab === 'issues') closeIssue(); else closeLog();
+    await selectTab(target.tab);
   }
 }
 
@@ -566,6 +768,7 @@ async function loadObservabilitySettings(): Promise<void> {
 async function selectTab(tab: DashboardTab, load = true): Promise<void> {
   if (tab !== 'sessions' && activeTab === 'sessions') closePlayer();
   activeTab = tab;
+  syncLink();
   for (const name of ['sessions', 'issues', 'logs'] as const) {
     const selected = name === tab;
     $(`${name}-view`).hidden = !selected;
@@ -631,18 +834,24 @@ function pageState<T extends { id: string }>(records: PagedRecords<T>, prefix: s
   $<HTMLButtonElement>(`${prefix}-more`).disabled = records.loading;
 }
 
-function renderIssues(): void {
-  $('issues').replaceChildren(...Array.from(issues.items.values(), (issue) => entryRow(issue.id, issue.title, [
+function issueRow(issue: Issue, selected = selectedIssue?.id === issue.id): HTMLLIElement {
+  return entryRow(issue.id, issue.title, [
     badge(issue.status), badge(issue.level, issue.level), issue.service,
     `${issue.occurrenceCount} occurrence${issue.occurrenceCount === 1 ? '' : 's'}`, `Last seen ${dateTime(issue.lastSeen)}`,
-  ], selectedIssue?.id === issue.id, () => run(() => openIssue(issue.id)))));
+  ], selected, () => run(() => openIssue(issue.id)));
+}
+
+function renderIssues(): void {
+  $('issues').replaceChildren(...Array.from(issues.items.values(), (issue) => issueRow(issue)));
   $('issue-count').textContent = issues.page ? `${issues.totalItems} issue${issues.totalItems === 1 ? '' : 's'}, ${issues.items.size} loaded` : '';
   pageState(issues, 'issues', 'issues');
+  renderFocus('issues');
 }
 
 async function searchIssues(): Promise<void> {
   const query = filterQuery('issue-filters', ['q', 'status', 'service', 'accountId', 'deviceId', 'sessionId', 'from', 'to']);
   showAdvancedFilterCount('issue-filters', query);
+  delete focus.issues;
   issues.reset(query);
   closeIssue();
   renderIssues();
@@ -665,6 +874,9 @@ async function loadIssues(): Promise<void> {
 
 function closeIssue(): void {
   issueGeneration++;
+  shownIssue = '';
+  chosenOccurrence = '';
+  syncLink();
   selectedIssue = undefined;
   selectedOccurrence = undefined;
   occurrences.reset(new URLSearchParams());
@@ -677,6 +889,7 @@ function closeIssue(): void {
     row.classList.remove('selected');
     row.querySelector('button')?.removeAttribute('aria-current');
   }
+  renderFocus('issues');
 }
 
 function issueSummary(): void {
@@ -694,11 +907,22 @@ function issueSummary(): void {
   });
 }
 
-async function openIssue(id: string): Promise<void> {
+// An issue opens at its newest occurrence, or at one the address names.
+async function openIssue(id: string, occurrence = ''): Promise<void> {
   closeIssue();
+  shownIssue = id;
+  chosenOccurrence = occurrence;
+  syncLink();
   const generation = issueGeneration;
   status('Loading issue...');
-  const result = await request(`/api/replay/issues/${encodeURIComponent(id)}?page=1`);
+  let result;
+  try {
+    result = await request(`/api/replay/issues/${encodeURIComponent(id)}?page=1`);
+  } catch (error) {
+    // Nothing opened, so the address stops naming it.
+    if (generation === issueGeneration) closeIssue();
+    throw error;
+  }
   if (generation !== issueGeneration) return;
   selectedIssue = result.issue;
   occurrences.accept(result, occurrences.generation);
@@ -708,10 +932,18 @@ async function openIssue(id: string): Promise<void> {
   renderIssues();
   renderOccurrences();
   const first = occurrences.items.values().next().value;
-  if (first) showOccurrence(first);
+  if (first) showOccurrence(occurrences.items.get(occurrence) ?? first);
   if (stacked()) $('issue-title').scrollIntoView({ block: 'start' });
   $('issue-title').focus({ preventScroll: true });
   status('');
+  if (!occurrence) return;
+  const found = await findInList({ has: (key) => occurrences.items.has(key), more: () => occurrences.more, next: () => occurrences.loading ? occurrences.settled() : loadOccurrences() },
+    occurrence, REVEAL_PAGES, () => generation === issueGeneration && chosenOccurrence === occurrence);
+  if (found === undefined) return;
+  // An occurrence since removed, for example by retention, leaves the issue at its newest.
+  if (!found) { chosenOccurrence = ''; syncLink(); return; }
+  if (selectedOccurrence?.id !== occurrence) showOccurrence(occurrences.items.get(occurrence)!);
+  showRow(rowOf('occurrences', occurrence));
 }
 
 async function changeIssue(statusValue: IssueStatus): Promise<void> {
@@ -745,7 +977,11 @@ async function changeIssue(statusValue: IssueStatus): Promise<void> {
 function renderOccurrences(): void {
   $('occurrences').replaceChildren(...Array.from(occurrences.items.values(), (entry) => entryRow(entry.id, dateTime(entry.timestamp), [
     entry.accountId || 'Guest', entry.deviceId, entry.service, badge(entry.level, entry.level), entry.handled ? 'Handled' : 'Unhandled',
-  ], selectedOccurrence?.id === entry.id, () => showOccurrence(entry))));
+  ], selectedOccurrence?.id === entry.id, () => {
+    chosenOccurrence = entry.id;
+    syncLink();
+    showOccurrence(entry);
+  })));
   pageState(occurrences, 'occurrences', 'occurrences');
 }
 
@@ -782,10 +1018,7 @@ function showContext(target: string, entry: LogEntry, handled?: boolean): void {
       const open = document.createElement('button');
       open.type = 'button';
       open.textContent = 'Watch replay';
-      open.addEventListener('click', () => run(async () => {
-        await selectTab('sessions', false);
-        await watch(entry.sessionId, entry.timestamp);
-      }));
+      open.addEventListener('click', () => run(() => showSession(entry.sessionId, entry.timestamp)));
       definition.append(open);
     }
     context.append(term, definition);
@@ -804,17 +1037,23 @@ function showOccurrence(entry: ErrorOccurrence): void {
   if (stacked()) $('occurrence-detail').scrollIntoView({ block: 'nearest' });
 }
 
-function renderLogs(): void {
-  $('logs').replaceChildren(...Array.from(logs.items.values(), (entry) => entryRow(entry.id, entry.message, [
+function logRow(entry: LogEntry, selected = selectedLog?.id === entry.id): HTMLLIElement {
+  return entryRow(entry.id, entry.message, [
     badge(entry.level, entry.level), entry.service, dateTime(entry.timestamp), entry.accountId || 'Guest',
-  ], selectedLog?.id === entry.id, () => run(() => openLog(entry.id)))));
+  ], selected, () => run(() => openLog(entry.id)));
+}
+
+function renderLogs(): void {
+  $('logs').replaceChildren(...Array.from(logs.items.values(), (entry) => logRow(entry)));
   $('log-count').textContent = logs.page ? `${logs.totalItems} log${logs.totalItems === 1 ? '' : 's'}, ${logs.items.size} loaded` : '';
   pageState(logs, 'logs', 'logs');
+  renderFocus('logs');
 }
 
 async function searchLogs(): Promise<void> {
   const query = filterQuery('log-filters', ['q', 'level', 'service', 'accountId', 'deviceId', 'sessionId', 'from', 'to']);
   showAdvancedFilterCount('log-filters', query);
+  delete focus.logs;
   logs.reset(query);
   closeLog();
   renderLogs();
@@ -1009,6 +1248,8 @@ async function loadLogs(): Promise<void> {
 
 function closeLog(): void {
   logGeneration++;
+  shownLog = '';
+  syncLink();
   selectedLog = undefined;
   $('log-detail').hidden = true;
   $('no-log').hidden = false;
@@ -1016,13 +1257,22 @@ function closeLog(): void {
     row.classList.remove('selected');
     row.querySelector('button')?.removeAttribute('aria-current');
   }
+  renderFocus('logs');
 }
 
 async function openLog(id: string): Promise<void> {
   closeLog();
+  shownLog = id;
+  syncLink();
   const generation = logGeneration;
   status('Loading log...');
-  const entry: LogEntry = await request(`/api/replay/logs/${encodeURIComponent(id)}`);
+  let entry: LogEntry;
+  try {
+    entry = await request(`/api/replay/logs/${encodeURIComponent(id)}`);
+  } catch (error) {
+    if (generation === logGeneration) closeLog();
+    throw error;
+  }
   if (generation !== logGeneration) return;
   selectedLog = entry;
   $('log-detail').hidden = false;
@@ -1067,7 +1317,7 @@ function renderAlerts(): void {
     const isRead = alert.acknowledged || readAlerts.has(alert.id);
     const delivery = alert.delivery === 'sent' ? 'Sent to webhook' : alert.delivery === 'failed' ? 'Webhook did not accept it' : alert.delivery === 'pending' ? 'Sending to webhook' : '';
     const row = entryRow(alert.id, alert.title, [alert.kind === 'regressed' ? 'Resolved issue returned' : 'New issue', dateTime(alert.timestamp), delivery], false,
-      () => run(() => openIssue(alert.issueId)));
+      () => run(() => showIssue(alert.issueId)));
     row.classList.add('alert-row');
     row.classList.toggle('acknowledged', isRead);
     const acknowledge = document.createElement('button');
@@ -1268,6 +1518,12 @@ new IntersectionObserver((entries) => {
 $('close-recording').addEventListener('click', closePlayer);
 $('logout').addEventListener('click', () => { signOut(); status('Signed out'); });
 for (const tab of ['sessions', 'issues', 'logs'] as const) {
+  // The record stays open; only the list comes back.
+  document.getElementById(`${tab}-focus-back`)?.addEventListener('click', () => {
+    delete focus[tab];
+    renderFocus(tab);
+    $(tab).querySelector('button')?.focus();
+  });
   $(`${tab}-tab`).addEventListener('click', () => run(() => selectTab(tab)));
   $(`${tab}-tab`).addEventListener('keydown', (event: KeyboardEvent) => {
     const tabs: DashboardTab[] = ['sessions', 'issues', 'logs'];
@@ -1319,7 +1575,12 @@ new ResizeObserver(() => {
   }, 100);
 }).observe($('player'));
 document.addEventListener('visibilitychange', scheduleAlertRefresh);
-window.addEventListener('pagehide', () => { dashboardDisposed = true; stopAlertRefresh(); closePlayer(); securityPanel.reset(); agentsPanel.reset(); });
+// The address keeps naming the recording closed here, so a page the browser brings back from its cache opens it again.
+window.addEventListener('pagehide', () => { routing = false; dashboardDisposed = true; stopAlertRefresh(); closePlayer(); securityPanel.reset(); agentsPanel.reset(); });
 window.addEventListener('hashchange', () => { if (!$('dashboard').hidden) run(follow); });
-window.addEventListener('pageshow', () => { dashboardDisposed = false; scheduleAlertRefresh(); });
+window.addEventListener('pageshow', (event) => {
+  dashboardDisposed = false;
+  scheduleAlertRefresh();
+  if (event.persisted && token && !$('dashboard').hidden) run(follow);
+});
 if (token) void open().catch(() => { signOut(); status('Sign in again to view recordings'); });

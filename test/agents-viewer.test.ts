@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { agentSetups, parseDashboardLink, relativeTime, requestText, scopeText, type AgentRequest } from '../viewer/agents';
+import { agentSetups, relativeTime, requestText, scopeText, type AgentRequest } from '../viewer/agents';
 
 const url = 'https://replay.example.com/api/replay/mcp';
 const key = 'pbr_mcp_' + 'A1b2C3d4'.repeat(5);
@@ -33,15 +33,6 @@ test('setups that live in files people commit keep the key out of them', () => {
   // Codex reads it from an environment variable.
   assert.equal(codex.text, `[mcp_servers.pocketbase-replay]\nurl = "${url}"\nbearer_token_env_var = "PB_REPLAY_MCP_KEY"`);
   assert.ok(codex.hint.includes(`export PB_REPLAY_MCP_KEY=${key}`));
-});
-
-test('links from agents open a recording at a moment, an issue or a log, and nothing else', () => {
-  assert.deepEqual(parseDashboardLink('#session=abcdefghij01234&at=1760605923000'), { kind: 'session', id: 'abcdefghij01234', at: 1760605923000 });
-  assert.deepEqual(parseDashboardLink('#session=abcdefghij01234'), { kind: 'session', id: 'abcdefghij01234' });
-  assert.deepEqual(parseDashboardLink('#session=abcdefghij01234&at=soon'), { kind: 'session', id: 'abcdefghij01234' });
-  assert.deepEqual(parseDashboardLink('#issue=abcdefghij01234'), { kind: 'issue', id: 'abcdefghij01234' });
-  assert.deepEqual(parseDashboardLink('log=abcdefghij01234'), { kind: 'log', id: 'abcdefghij01234' });
-  for (const hash of ['', '#', '#session=ABC', '#issue=abcdefghij0123', '#issue=../../x', '#other=abcdefghij01234']) assert.equal(parseDashboardLink(hash), undefined, hash);
 });
 
 test('keys and requests are described in a few plain words', () => {

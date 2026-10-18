@@ -142,6 +142,10 @@ button.secondary { background: transparent; } button.secondary:hover { backgroun
 .session .danger { flex: none; margin: 0 10px 0 2px; padding: 4px 9px; font-size: 12px; background: transparent; border-color: #5c2c35; color: #ffb3bd; }
 .session .danger:hover, .account-tools button:hover { background: #7b2d36; color: #fff; }
 .sessions-end { display: flex; justify-content: center; align-items: center; min-height: 52px; padding: 8px; color: #aebdd1; font-size: 13px; }
+/* A record the list does not hold, such as one opened by a link, shown on its own in place of the list. */
+.list-focus { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin: 12px 0 8px; }
+.list-focus p { margin: 0; font-size: 13px; }
+.list-focus button { flex: none; font-size: 12px; padding: 4px 10px; }
 .viewer { display: flex; flex-direction: column; }
 .no-recording { flex: 1; display: grid; place-content: center; min-height: 240px; text-align: center; }
 .no-recording h2 { margin: 0; } .no-recording p { margin: 4px 0 0; }
