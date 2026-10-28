@@ -53,8 +53,8 @@ export interface DevtoolsPanel {
 export const ACTIVITY_LIMITS = {
   marks: 100, rows: 2000, labelText: 40, labelNodes: 200, titleChars: 1000, urlChars: 2048, followPauseMs: 4000,
 };
-// Strong enough to read on rrweb-player's light progress bar, apart from the pale idle marks.
-export const MARK_COLORS = { error: '#d92d45', request: '#c35a00', trigger: '#7048e8' };
+// Bright enough to read on the dashboard's dark progress bar, apart from the cyan idle marks.
+export const MARK_COLORS = { error: '#ff5e7b', request: '#ffb64d', trigger: '#b197fc' };
 
 const CONSOLE_LEVELS = new Map([['debug', 'Debug'], ['info', 'Info'], ['log', 'Log'], ['warn', 'Warning'], ['error', 'Error']]);
 const LOG_LEVELS = new Map([['trace', 'Trace'], ['debug', 'Debug'], ['info', 'Info'], ['warn', 'Warning'], ['error', 'Error'], ['fatal', 'Fatal']]);

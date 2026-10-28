@@ -15,6 +15,7 @@ import {
   timelineMarks, withoutActivity, type TimelineMark,
 } from './devtools';
 import { installSourceMaps } from './stack';
+import { installShell } from './shell';
 
 interface Session {
   sessionId: string; accountId: string; deviceId: string; platform: string; appVersion: string;
@@ -90,14 +91,24 @@ function toast(message: string): void {
 
 // Whatever a proxy put in front of /dash/replay, e.g. '/replay'; empty when served at the root.
 const base = location.pathname.replace(/\/dash\/replay\/?$/, '');
+// Made before any request, as each tells it whether the server answered. Loading the settings asks the server.
+const shell = installShell(() => $('open-settings').click(), () => request('/api/replay/settings'));
 
 async function request(path: string, body?: unknown, method = body === undefined ? 'GET' : 'POST'): Promise<any> {
-  const response = await fetch(base + path, {
-    method,
-    headers: { Authorization: token, 'Content-Type': 'application/json' },
-    body: body === undefined ? undefined : JSON.stringify(body),
-    cache: 'no-store',
-  });
+  let response: Response;
+  try {
+    response = await fetch(base + path, {
+      method,
+      headers: { Authorization: token, 'Content-Type': 'application/json' },
+      body: body === undefined ? undefined : JSON.stringify(body),
+      cache: 'no-store',
+    });
+  } catch {
+    // Nothing came back: this device is offline or the server is down.
+    shell.reachable(false);
+    throw new Error(navigator.onLine ? 'Could not reach the server. Try again in a moment' : 'You are offline. Reconnect and try again');
+  }
+  shell.reachable(true);
   const data = await response.json();
   if (!response.ok) throw new Error(data.message || `Request failed (${response.status})`);
   return data;
@@ -339,6 +350,7 @@ function signOut(): void {
   $('dashboard').hidden = true;
   $('dashboard-tabs').hidden = true;
   $('header-actions').hidden = true;
+  shell.signedIn(false);
   securityPanel.reset();
   agentsPanel.reset();
   $<HTMLDialogElement>('settings-dialog').close();
@@ -360,6 +372,7 @@ async function loadSettings(): Promise<void> {
   for (const key of ['record_network', 'record_console', 'record_pocketbase']) field('settings', key).checked = settings[key] === true;
   field('settings', 'upload_mode').value = settings.upload_mode === 'trigger' ? 'trigger' : 'session';
   showModeFields();
+  shell.recording(settings);
 }
 
 // Only the field for the chosen mode is shown; the other keeps its value.
@@ -391,18 +404,28 @@ function line(main: string, aside: string): HTMLSpanElement {
   return row;
 }
 
+// Short enough to sit beside an account ID: the time alone today, the day without the year this year.
+function shortTime(timestamp: number): string {
+  const date = new Date(timestamp), now = new Date();
+  const time = { hour: 'numeric', minute: '2-digit' } as const;
+  if (date.toDateString() === now.toDateString()) return date.toLocaleTimeString(undefined, time);
+  return date.toLocaleString(undefined, { month: 'short', day: 'numeric', ...(date.getFullYear() === now.getFullYear() ? time : { year: 'numeric' }) });
+}
+
 function sessionItem(session: Session): HTMLLIElement {
   const item = document.createElement('li');
   item.className = 'session';
   item.dataset.session = session.sessionId;
+  if (session.platform) item.dataset.platform = session.platform;
   const who = session.accountId || 'Guest';
   const started = new Date(session.startedAt).toLocaleString();
   const open = document.createElement('button');
   open.type = 'button';
   open.className = 'session-open';
   open.disabled = session.chunkCount === 0;
+  open.title = started;
   open.append(
-    line(who, started),
+    line(who, shortTime(session.startedAt)),
     line(session.deviceId, session.chunkCount ? `${(session.compressedBytes / 1024).toFixed(1)} KB` : 'No recording data'),
     line([session.platform, session.appVersion].filter(Boolean).join(' '), session.rooms.join(', ') || 'No room'),
   );
@@ -417,6 +440,7 @@ function sessionItem(session: Session): HTMLLIElement {
   remove.className = 'danger';
   remove.textContent = 'Delete';
   remove.setAttribute('aria-label', `Delete the recording of ${who} from ${started}`);
+  remove.title = 'Delete this recording';
   remove.addEventListener('click', () => run(() => removeSession(session, item)));
   item.append(open, remove);
   return item;
@@ -650,7 +674,7 @@ async function loadRecording(sessionId: string, generation: number, timestamp?: 
   const timeline = { position: offset, duration: shortened.events[shortened.events.length - 1].timestamp - start };
   const recorded = collectActivity(recovered.events);
   const activityMarks = timelineMarks(recorded, timeline);
-  const tags: Record<string, string> = Object.fromEntries(marks.map((mark) => [mark.data.tag, '#ffc38a']));
+  const tags: Record<string, string> = Object.fromEntries(marks.map((mark) => [mark.data.tag, '#46d7f8']));
   const markEvent = (mark: TimelineMark) => {
     tags[mark.tag] = mark.color;
     return { type: 5, timestamp: start + offset(mark.timestamp), data: { tag: mark.tag, payload: {} } };
@@ -666,6 +690,11 @@ async function loadRecording(sessionId: string, generation: number, timestamp?: 
       autoPlay: false, skipInactive: false, showWarning: false, showDebug: false,
       UNSAFE_replayCanvas: false,
       tags,
+      // A replayed focus would move the viewer's keyboard focus into the replay, out of reach of the dashboard's keys.
+      triggerFocus: false,
+      // Coloured for the dark controls; the trail stays visible on light and dark apps alike.
+      inactiveColor: 'rgba(164, 177, 193, 0.35)',
+      mouseTail: { duration: 500, lineCap: 'round', lineWidth: 3, strokeStyle: 'rgba(22, 194, 135, 0.85)' },
     },
   }) as ReplayPlayer;
   keepPlaying(player.getReplayer(), (error) => { if (generation === playbackGeneration) playbackError(error); });
@@ -717,6 +746,7 @@ async function open(): Promise<void> {
   $('dashboard').hidden = false;
   $('dashboard-tabs').hidden = false;
   $('header-actions').hidden = false;
+  shell.signedIn(true);
   await search();
   status('');
   // A link to something since deleted says so, rather than failing the sign-in it followed.
@@ -763,12 +793,14 @@ async function loadObservabilitySettings(): Promise<void> {
   $('webhook-test-state').textContent = '';
   $('errors-disabled').hidden = settings.errors_enabled === true;
   $('logs-disabled').hidden = settings.logs_enabled === true;
+  shell.diagnostics(settings);
 }
 
 async function selectTab(tab: DashboardTab, load = true): Promise<void> {
   if (tab !== 'sessions' && activeTab === 'sessions') closePlayer();
   activeTab = tab;
   syncLink();
+  shell.view(tab);
   for (const name of ['sessions', 'issues', 'logs'] as const) {
     const selected = name === tab;
     $(`${name}-view`).hidden = !selected;
@@ -835,8 +867,10 @@ function pageState<T extends { id: string }>(records: PagedRecords<T>, prefix: s
 }
 
 function issueRow(issue: Issue, selected = selectedIssue?.id === issue.id): HTMLLIElement {
+  const state = badge(issue.status);
+  state.dataset.status = issue.status;
   return entryRow(issue.id, issue.title, [
-    badge(issue.status), badge(issue.level, issue.level), issue.service,
+    state, badge(issue.level, issue.level), issue.service,
     `${issue.occurrenceCount} occurrence${issue.occurrenceCount === 1 ? '' : 's'}`, `Last seen ${dateTime(issue.lastSeen)}`,
   ], selected, () => run(() => openIssue(issue.id)));
 }
@@ -1079,6 +1113,7 @@ function clearVolume(): void {
 
 function emptyVolume(): void {
   $('log-volume').hidden = true;
+  document.getElementById('log-volume-stats')?.replaceChildren();
   $('log-volume-chart').replaceChildren();
   $('log-volume-table').replaceChildren();
   $('log-volume-tip').hidden = true;
@@ -1119,6 +1154,7 @@ function roundedTop(x: number, y: number, width: number, height: number, radius:
 }
 
 const VOLUME_BOX = { height: 124, left: 44, right: 6, top: 8, bottom: 22 };
+const STAT_LABELS: Record<(typeof VOLUME_GROUPS)[number]['key'], string> = { errors: 'Errors', warnings: 'Warnings', info: 'Info', debug: 'Debug' };
 
 function renderVolume(): void {
   const chart = $('log-volume-chart');
@@ -1126,6 +1162,19 @@ function renderVolume(): void {
   if (!volume || !volume.total || !volumeData.length) { emptyVolume(); return; }
   $('log-volume').hidden = false;
   $('log-volume-range').textContent = `${volume.total.toLocaleString()} in ${bucketLabel(volume.bucketMs)} periods`;
+  // Totals for the whole range, each keyed by its colour as in the legend. A page cached from before them has none.
+  const totals: [string, string, number][] = [['total', 'Total', volume.total],
+    ...VOLUME_GROUPS.map((group, index): [string, string, number] => [group.key, STAT_LABELS[group.key], volumeData.reduce((sum, column) => sum + column.groups[index], 0)])];
+  document.getElementById('log-volume-stats')?.replaceChildren(...totals.map(([key, label, count]) => {
+    const stat = document.createElement('div');
+    stat.dataset.group = key;
+    const term = document.createElement('dt');
+    term.textContent = label;
+    const value = document.createElement('dd');
+    value.textContent = count.toLocaleString();
+    stat.append(term, value);
+    return stat;
+  }));
   const width = Math.max(240, chart.clientWidth), { height, left, right, top, bottom } = VOLUME_BOX;
   const plot = { width: width - left - right, height: height - top - bottom };
   const max = volumeScale(Math.max(...volumeData.map((column) => column.total)));
@@ -1309,6 +1358,7 @@ function renderAlerts(): void {
   $('issues-alert-badge').textContent = String(unread);
   $('issues-alert-badge').hidden = !unread;
   $('issues-alert-badge').setAttribute('aria-label', `${unread} unread alerts${alerts.more ? ' loaded' : ''}`);
+  shell.alerts(unread);
   $('alerts-state').textContent = alerts.loading ? 'Loading alerts...'
     : !field('observability-settings', 'alerts_enabled').checked ? 'Issue alerts are off in settings'
       : alerts.page && !alerts.totalItems ? 'No issue alerts yet' : `${alerts.totalItems} alert${alerts.totalItems === 1 ? '' : 's'}`;
@@ -1528,8 +1578,9 @@ for (const tab of ['sessions', 'issues', 'logs'] as const) {
   $(`${tab}-tab`).addEventListener('keydown', (event: KeyboardEvent) => {
     const tabs: DashboardTab[] = ['sessions', 'issues', 'logs'];
     let next = tabs.indexOf(tab);
-    if (event.key === 'ArrowRight') next = (next + 1) % tabs.length;
-    else if (event.key === 'ArrowLeft') next = (next + tabs.length - 1) % tabs.length;
+    // The tabs stand in a column on wide screens and in a row on narrow ones, so both directions move.
+    if (event.key === 'ArrowRight' || event.key === 'ArrowDown') next = (next + 1) % tabs.length;
+    else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') next = (next + tabs.length - 1) % tabs.length;
     else if (event.key === 'Home') next = 0;
     else if (event.key === 'End') next = tabs.length - 1;
     else return;

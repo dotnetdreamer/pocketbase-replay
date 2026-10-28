@@ -4,360 +4,426 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="referrer" content="no-referrer">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#05070a">
   <title>PocketBase Replay</title>
-  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='32' y2='32' gradientUnits='userSpaceOnUse'%3E%3Cstop offset='0' stop-color='%235cb0ff'/%3E%3Cstop offset='1' stop-color='%232459a6'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='32' height='32' rx='8' fill='url(%23g)'/%3E%3Cpath d='M8 16a8 8 0 1 0 8-8' fill='none' stroke='%23fff' stroke-width='2.4' stroke-linecap='round'/%3E%3Cpath d='M12.2 8 17 4.2v7.6z' fill='%23fff' stroke='%23fff' stroke-linejoin='round'/%3E%3Cpath d='M14 12.5v7l6-3.5z' fill='%23fff' stroke='%23fff' stroke-width='1.6' stroke-linejoin='round'/%3E%3C/svg%3E">
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230a0e13'/%3E%3Crect x='.75' y='.75' width='30.5' height='30.5' rx='7.5' fill='none' stroke='%232bf5a8' stroke-opacity='.55' stroke-width='1.5'/%3E%3Cpath d='M8 16a8 8 0 1 0 8-8' fill='none' stroke='%232bf5a8' stroke-width='2.4' stroke-linecap='round'/%3E%3Cpath d='M12.2 8 17 4.2v7.6z' fill='%232bf5a8' stroke='%232bf5a8' stroke-linejoin='round'/%3E%3Cpath d='M14 12.5v7l6-3.5z' fill='%232bf5a8' stroke='%232bf5a8' stroke-width='1.6' stroke-linejoin='round'/%3E%3C/svg%3E">
   <!-- Relative, so the page also works behind a proxy path such as /replay/dash/replay. -->
   <link rel="stylesheet" href="replay/style.css">
   <script type="module" src="replay/app.js"></script>
 </head>
 <body>
   <header class="topbar">
-    <h1 class="brand"><svg class="logo" viewBox="0 0 32 32" width="36" height="36" role="img" aria-label="PocketBase Replay"><title>PocketBase Replay</title><defs><linearGradient id="logo-fill" x1="0" y1="0" x2="32" y2="32" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#5cb0ff"/><stop offset="1" stop-color="#2459a6"/></linearGradient></defs><rect width="32" height="32" rx="8" fill="url(#logo-fill)"/><path d="M8 16a8 8 0 1 0 8-8" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round"/><path d="M12.2 8 17 4.2v7.6z" fill="#fff" stroke="#fff" stroke-linejoin="round"/><path d="M14 12.5v7l6-3.5z" fill="#fff" stroke="#fff" stroke-width="1.6" stroke-linejoin="round"/></svg></h1>
-    <nav id="dashboard-tabs" class="dashboard-tabs" role="tablist" aria-label="Replay tools" hidden>
-      <button id="sessions-tab" type="button" role="tab" aria-controls="sessions-view" aria-selected="true">Sessions</button>
-      <button id="issues-tab" type="button" role="tab" aria-controls="issues-view" aria-selected="false" tabindex="-1">Issues <span id="issues-alert-badge" class="tab-count" hidden></span></button>
-      <button id="logs-tab" type="button" role="tab" aria-controls="logs-view" aria-selected="false" tabindex="-1">Logs</button>
-    </nav>
+    <h1 class="brand"><svg class="logo" viewBox="0 0 40 40" width="38" height="38" aria-hidden="true"><rect class="logo-tile" x=".75" y=".75" width="38.5" height="38.5" rx="10.5"/><path class="logo-arc" d="M12 20a8 8 0 1 0 8-8"/><path class="logo-glyph" d="M16.2 12 21 8.2v7.6z"/><path class="logo-glyph" d="M18 16.5v7l6-3.5z"/></svg><span class="brand-name">PocketBase</span> <span class="brand-suffix">replay</span><span class="caret" aria-hidden="true">_</span></h1>
     <p id="status" role="status" aria-live="polite"></p>
-    <div id="header-actions" class="header-actions" hidden>
-      <button id="open-settings" type="button" title="Sampling, retention and privacy rules"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="3.5" fill="currentColor" stroke="none"/></svg><span>Recording</span></button>
-      <button id="open-observability-settings" type="button" title="Error tracking, logs and alerts"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 12h4l2.5-7 5 14 2.5-7h5"/></svg><span>Diagnostics</span></button>
-      <button id="open-security" type="button" title="API keys, sign-in and rate limits"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.8l7.5 3v5.7c0 4.8-3.2 8.3-7.5 9.7-4.3-1.4-7.5-4.9-7.5-9.7V5.8z"/><path d="M8.8 12.2l2.2 2.2 4.2-4.4"/></svg><span>Security</span></button>
-      <button id="open-agents" type="button" title="Read-only access for AI coding agents"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5l1.9 5.1 5.1 1.9-5.1 1.9-1.9 5.1-1.9-5.1-5.1-1.9 5.1-1.9z"/><path d="M18.5 15.5l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8z"/></svg><span>AI agents</span></button>
-      <button id="logout" type="button" class="sign-out" title="Sign out" aria-label="Sign out"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9.5 4.5h-3a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h3"/><path d="M14.5 8l4.5 4-4.5 4"/><path d="M19 12H9.5"/></svg></button>
-    </div>
+    <button id="live-pill" class="live-pill" type="button" data-state="out" disabled><span class="live-dot" aria-hidden="true"></span><span id="live-text">Signed out</span><span id="live-detail" class="live-detail"></span></button>
   </header>
-  <form id="login" class="card login">
-    <h2>Sign in to PocketBase</h2>
-    <label>Email<input name="email" type="email" autocomplete="username" required></label>
-    <label>Password<input name="password" type="password" autocomplete="current-password" required></label>
-    <button type="submit">Sign in</button>
-  </form>
-  <main id="dashboard" hidden>
-    <dialog id="security-dialog" class="card" aria-labelledby="security-title">
-      <h2 id="security-title">Security settings</h2>
-      <p class="hint">Control who can send recordings, errors and logs, and how much data your server accepts<br>API key and sign-in requirements are off by default<br>Rate limits are already enabled</p>
-      <form id="security-settings" class="security-form">
-        <fieldset>
-          <legend>Who can send data</legend>
-          <label class="check"><input name="requireApiKey" type="checkbox" aria-describedby="security-key-hint"><span><strong>Require API key</strong><small>Uploads need a valid API key</small></span></label>
-          <p id="security-key-hint" class="hint">Create an API key below to enable this option<br>Then add the key to your app before turning it on</p>
-          <label class="check"><input name="requireAccount" type="checkbox"><span><strong>Require a signed-in account</strong><small>Only signed-in users can send data<br>Guest uploads are blocked</small></span></label>
-          <p class="hint">API keys in websites and mobile apps can be copied<br>Rate and upload limits still apply when a key is required</p>
-        </fieldset>
-        <div class="dialog-actions"><button type="submit">Save settings</button></div>
-      </form>
-      <details id="security-limits-section" class="security-limits">
-        <summary>Rate limits</summary>
-        <p class="hint">Start with the default limits<br>Increase a limit if your apps are being blocked during normal use<br>Lower it to reduce incoming traffic<br>The examples below use the defaults; your chosen values are in the fields</p>
-        <p class="hint">An IP address is the network address the server sees<br>People on the same Wi-Fi or mobile network can share one address and its limits<br>Per-device limits apply to one app device<br>Server limits cover all your apps and devices, even when they use different API keys</p>
-        <form id="security-limits" class="security-form">
-          <fieldset>
-            <legend>Recordings</legend>
-            <div class="security-limit-grid">
-              <label><span id="replay-config-limit-help-label">Settings checks per IP each minute</span><input name="replay.config_requests_per_ip_minute" type="number" min="1" max="1000000" step="1" required aria-labelledby="replay-config-limit-help-label" aria-describedby="replay-config-limit-help"><small id="replay-config-limit-help">How often apps sharing one IP can check whether recording is enabled and load privacy rules<br>Extra checks are blocked until the next minute<span class="rate-limit-example"><strong>Example:</strong> With a limit of 120, 20 devices sharing one IP could each make 6 settings checks in one minute</span><span class="rate-limit-guidance"><strong>When to change:</strong> Raise this for networks with many active devices<br>Lower it to reduce repeated settings checks</span></small></label>
-              <label><span id="replay-start-limit-help-label">Start requests per IP each minute</span><input name="replay.start_requests_per_ip_minute" type="number" min="1" max="1000000" step="1" required aria-labelledby="replay-start-limit-help-label" aria-describedby="replay-start-limit-help"><small id="replay-start-limit-help">Counts attempts to start recordings from one IP, including failed attempts<br>Extra attempts are blocked until the next minute<span class="rate-limit-example"><strong>Example:</strong> With a limit of 30, the 31st start attempt from one IP is blocked that minute, even if earlier attempts failed</span><span class="rate-limit-guidance"><strong>When to change:</strong> Raise this if many devices start recording at once on one network<br>Lower it to restrict repeated start attempts</span></small></label>
-              <label><span id="replay-upload-limit-help-label">Upload requests per IP each minute</span><input name="replay.upload_requests_per_ip_minute" type="number" min="1" max="1000000" step="1" required aria-labelledby="replay-upload-limit-help-label" aria-describedby="replay-upload-limit-help"><small id="replay-upload-limit-help">Recordings arrive in small parts<br>Each request sending a part counts once<br>All devices sharing one IP share this limit<span class="rate-limit-example"><strong>Example:</strong> With a limit of 240, devices sharing one IP can send 240 recording parts in one minute<br>A part can contain many recorded actions</span><span class="rate-limit-guidance"><strong>When to change:</strong> Raise this for busy apps or networks with many recording devices<br>Lower it to reduce the number of upload requests</span></small></label>
-              <label><span id="replay-volume-limit-help-label">Upload limit per IP each hour (MB)</span><input name="replay.upload_mb_per_ip_hour" type="number" min="1" max="1048576" step="1" required aria-labelledby="replay-volume-limit-help-label" aria-describedby="replay-volume-limit-help"><small id="replay-volume-limit-help">Total compressed recording data accepted from one IP during a clock hour<br>Uploads over this allowance are blocked until the next hour<span class="rate-limit-example"><strong>Example:</strong> With a 64 MB allowance, 40 MB uploaded by one device leaves 24 MB for other devices sharing its IP that hour</span><span class="rate-limit-guidance"><strong>When to change:</strong> Raise this if normal recordings reach the data allowance<br>Lower it to reduce how much recording data one IP can upload</span></small></label>
-              <label><span id="replay-device-limit-help-label">New recordings per device each hour</span><input name="replay.sessions_per_device_hour" type="number" min="1" max="1000000" step="1" required aria-labelledby="replay-device-limit-help-label" aria-describedby="replay-device-limit-help"><small id="replay-device-limit-help">Counts recordings started by one app device in the past 60 minutes, including recordings that have already ended<br>Extra starts must wait<span class="rate-limit-example"><strong>Example:</strong> With a limit of 12, one device can start 12 recordings within 60 minutes<br>A 13th must wait, even if earlier recordings have ended</span><span class="rate-limit-guidance"><strong>When to change:</strong> Raise this if your app often begins new recordings<br>Lower it to restrict one device repeatedly starting recordings</span></small></label>
-              <label><span id="replay-ip-limit-help-label">New recordings per IP each hour</span><input name="replay.sessions_per_ip_hour" type="number" min="1" max="1000000" step="1" required aria-labelledby="replay-ip-limit-help-label" aria-describedby="replay-ip-limit-help"><small id="replay-ip-limit-help">Counts recordings started across all devices sharing one IP in the past 60 minutes<br>Existing recordings can still upload within their other limits<span class="rate-limit-example"><strong>Example:</strong> With a limit of 120, 20 devices sharing one IP could each start 6 recordings within 60 minutes</span><span class="rate-limit-guidance"><strong>When to change:</strong> Raise this for shared Wi-Fi or mobile networks with many users<br>Lower it to restrict new recordings from one network address</span></small></label>
-              <label><span id="replay-total-limit-help-label">New recordings on this server each hour</span><input name="replay.sessions_per_hour" type="number" min="1" max="1000000" step="1" required aria-labelledby="replay-total-limit-help-label" aria-describedby="replay-total-limit-help"><small id="replay-total-limit-help">Counts recordings started across all apps, devices and IP addresses on this server in the past 60 minutes<br>Extra starts wait for older ones to leave that window<span class="rate-limit-example"><strong>Example:</strong> With a limit of 3,000, all your apps together can start 3,000 recordings within 60 minutes, across every IP and API key</span><span class="rate-limit-guidance"><strong>When to change:</strong> Raise this as your audience grows and your server has capacity<br>Lower it to limit the total number of new recordings</span></small></label>
-            </div>
-          </fieldset>
-          <fieldset>
-            <legend>Errors and logs</legend>
-            <div class="security-limit-grid">
-              <label><span id="diagnostics-config-limit-help-label">Settings checks per IP each minute</span><input name="observability.config_requests_per_ip_minute" type="number" min="1" max="1000000" step="1" required aria-labelledby="diagnostics-config-limit-help-label" aria-describedby="diagnostics-config-limit-help"><small id="diagnostics-config-limit-help">How often apps sharing one IP can check whether errors and logs are enabled, or begin or refresh a sending session<br>Extra checks wait until the next minute<span class="rate-limit-example"><strong>Example:</strong> With a limit of 120, all devices sharing one IP get 120 checks in one minute<br>Checks that refresh an existing session also count</span><span class="rate-limit-guidance"><strong>When to change:</strong> Raise this for networks with many active devices<br>Lower it to reduce repeated checks and session refresh requests</span></small></label>
-              <label><span id="diagnostics-upload-limit-help-label">Upload requests per IP each minute</span><input name="observability.upload_requests_per_ip_minute" type="number" min="1" max="1000000" step="1" required aria-labelledby="diagnostics-upload-limit-help-label" aria-describedby="diagnostics-upload-limit-help"><small id="diagnostics-upload-limit-help">Each upload can contain several entries and counts as one request<br>One IP gets this many error requests and this many log requests per minute<span class="rate-limit-example"><strong>Example:</strong> With a limit of 120, one IP can send 120 error uploads and 120 log uploads in one minute<br>Each upload can contain many entries</span><span class="rate-limit-guidance"><strong>When to change:</strong> Raise this if normal error or log uploads are blocked<br>Lower it to reduce the number of upload requests</span></small></label>
-              <label><span id="diagnostics-volume-limit-help-label">Upload limit per IP each hour (MB)</span><input name="observability.upload_mb_per_ip_hour" type="number" min="1" max="1048576" step="1" required aria-labelledby="diagnostics-volume-limit-help-label" aria-describedby="diagnostics-volume-limit-help"><small id="diagnostics-volume-limit-help">Total error and log data accepted from one IP during a clock hour<br>Both share this allowance<br>Extra uploads wait until the next hour<span class="rate-limit-example"><strong>Example:</strong> With an 8 MB allowance, 5 MB of logs leaves 3 MB for errors and more logs from the same IP that hour</span><span class="rate-limit-guidance"><strong>When to change:</strong> Raise this if normal error and log data reaches the allowance<br>Lower it to restrict how much data one IP can upload</span></small></label>
-              <label><span id="diagnostics-device-limit-help-label">New sessions per device each hour</span><input name="observability.sessions_per_device_hour" type="number" min="1" max="1000000" step="1" required aria-labelledby="diagnostics-device-limit-help-label" aria-describedby="diagnostics-device-limit-help"><small id="diagnostics-device-limit-help">Counts new error/log sending sessions for one app device in the past 60 minutes<br>A session can send many entries; refreshing it does not count again<span class="rate-limit-example"><strong>Example:</strong> With a limit of 30, one device can begin 30 error/log sessions within 60 minutes<br>Sending more entries in an active session does not use another session</span><span class="rate-limit-guidance"><strong>When to change:</strong> Raise this if your app needs more new sending sessions<br>Lower it to restrict repeated session creation by one device</span></small></label>
-              <label><span id="diagnostics-ip-limit-help-label">New sessions per IP each hour</span><input name="observability.sessions_per_ip_hour" type="number" min="1" max="1000000" step="1" required aria-labelledby="diagnostics-ip-limit-help-label" aria-describedby="diagnostics-ip-limit-help"><small id="diagnostics-ip-limit-help">Counts new error/log sending sessions across all devices sharing one IP in the past 60 minutes<br>Active sessions can keep sending within their other limits<span class="rate-limit-example"><strong>Example:</strong> With a limit of 120, 20 devices sharing one IP could each begin 6 error/log sessions within 60 minutes</span><span class="rate-limit-guidance"><strong>When to change:</strong> Raise this for shared networks with many users<br>Lower it to restrict new sending sessions from one network address</span></small></label>
-              <label><span id="diagnostics-total-limit-help-label">New sessions on this server each hour</span><input name="observability.sessions_per_hour" type="number" min="1" max="1000000" step="1" required aria-labelledby="diagnostics-total-limit-help-label" aria-describedby="diagnostics-total-limit-help"><small id="diagnostics-total-limit-help">Counts new error/log sending sessions across all apps, devices and IP addresses on this server in the past 60 minutes<br>Extra sessions must wait<span class="rate-limit-example"><strong>Example:</strong> With a limit of 20,000, all apps together can begin 20,000 error/log sessions within 60 minutes, across every IP and API key</span><span class="rate-limit-guidance"><strong>When to change:</strong> Raise this as usage grows and your server has capacity<br>Lower it to limit the total number of new sending sessions</span></small></label>
-            </div>
-            <p class="hint">The upload request limit applies to errors and logs separately<br>The data limit covers both<br>These values also appear in Diagnostics settings</p>
-          </fieldset>
-          <p class="hint">Request counts reset at the start of each minute, and upload allowances reset at the start of each hour<br>New-session limits look back over the past 60 minutes<br>Saving new limits keeps the current usage counts<br>Daily storage limits are set in Recording settings and Diagnostics settings</p>
-          <p id="security-limits-error" class="dialog-error" role="alert"></p>
-          <p id="security-limits-state" role="status" aria-live="polite"></p>
-          <div class="dialog-actions"><button id="security-limits-defaults" type="button" class="secondary">Use default limits</button><button type="submit">Save limits</button></div>
-        </form>
-      </details>
-      <section class="security-keys" aria-labelledby="security-keys-title">
-        <h3 id="security-keys-title">API keys</h3>
-        <p class="hint">Give each app its own key<br>Keys can only send data<br>All keys share the same recording settings and upload limits</p>
-        <ul id="security-keys" class="security-key-list"></ul>
-        <p id="security-keys-empty" class="hint">No API keys yet</p>
-        <form id="security-create-key" class="security-create-key">
-          <label>Key name<input name="label" maxlength="64" required autocomplete="off" placeholder="My app"></label>
-          <button type="submit">Create key</button>
-        </form>
-        <div id="security-created-key" class="security-created-key" hidden>
-          <label>Copy this key now<input id="security-key-value" readonly autocomplete="off" spellcheck="false"></label>
-          <button id="security-copy-key" type="button" class="secondary">Copy key</button>
-          <p class="hint">Copy this key now<br>You won’t see it again<br>Add it to your app’s setup as <code>apiKey</code></p>
-        </div>
-      </section>
-      <p id="security-error" class="dialog-error" role="alert"></p>
-      <p id="security-state" role="status" aria-live="polite"></p>
-      <div class="dialog-actions"><button id="close-security" type="button" class="secondary">Close</button></div>
-    </dialog>
-    <dialog id="agents-dialog" class="card" aria-labelledby="agents-title">
-      <h2 id="agents-title">AI agents</h2>
-      <p class="hint">Let coding agents such as Claude Code, Cursor and VS Code read issues, logs and recordings over MCP<br>Agents get recordings as text: pages, clicks, form fields and PocketBase calls, never field values<br>Keys can only read, each limited to what you choose, and every request is listed below</p>
-      <div class="agents-endpoint">
-        <span>Server URL</span>
-        <code id="agents-url"></code>
-        <button id="agents-copy-url" type="button" class="secondary">Copy</button>
+  <div class="shell">
+    <div class="rail">
+      <nav id="dashboard-tabs" class="dashboard-tabs" role="tablist" aria-label="Replay tools" aria-orientation="vertical" hidden>
+        <button id="sessions-tab" type="button" role="tab" aria-controls="sessions-view" aria-selected="true" aria-keyshortcuts="1"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4.5" width="18" height="13" rx="2.5"/><path d="M10.25 8.75v4.5l3.75-2.25z"/><path d="M8.5 20.5h7"/></svg><span>Sessions</span></button>
+        <button id="issues-tab" type="button" role="tab" aria-controls="issues-view" aria-selected="false" tabindex="-1" aria-keyshortcuts="2"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="7.5" y="7.5" width="9" height="12" rx="4.5"/><path d="M9.5 7.6a2.5 2.5 0 0 1 5 0"/><path d="M12 11.5v7.5"/><path d="M7.5 13H4M20 13h-3.5M7.7 9.8 5.2 7.8M16.3 9.8l2.5-2M7.9 16.9l-2.7 1.8M16.1 16.9l2.7 1.8"/></svg><span>Issues</span> <span id="issues-alert-badge" class="tab-count" hidden></span></button>
+        <button id="logs-tab" type="button" role="tab" aria-controls="logs-view" aria-selected="false" tabindex="-1" aria-keyshortcuts="3"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="m7.5 9.5 3 2.5-3 2.5"/><path d="M12.5 15h4"/></svg><span>Logs</span></button>
+      </nav>
+      <div id="header-actions" class="header-actions" hidden>
+        <button id="open-settings" type="button" title="Sampling, retention and privacy rules"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="3.5" fill="currentColor" stroke="none"/></svg><span>Recording</span></button>
+        <button id="open-observability-settings" type="button" title="Error tracking, logs and alerts"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 12h4l2.5-7 5 14 2.5-7h5"/></svg><span>Diagnostics</span></button>
+        <button id="open-security" type="button" title="API keys, sign-in and rate limits"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.8l7.5 3v5.7c0 4.8-3.2 8.3-7.5 9.7-4.3-1.4-7.5-4.9-7.5-9.7V5.8z"/><path d="M8.8 12.2l2.2 2.2 4.2-4.4"/></svg><span>Security</span></button>
+        <button id="open-agents" type="button" title="Read-only access for AI coding agents"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5l1.9 5.1 5.1 1.9-5.1 1.9-1.9 5.1-1.9-5.1-5.1-1.9 5.1-1.9z"/><path d="M18.5 15.5l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8z"/></svg><span>AI agents</span></button>
+        <button id="logout" type="button" class="sign-out" title="Sign out" aria-label="Sign out"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9.5 4.5h-3a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h3"/><path d="M14.5 8l4.5 4-4.5 4"/><path d="M19 12H9.5"/></svg><span>Sign out</span></button>
       </div>
-      <section class="security-keys" aria-labelledby="agents-keys-title">
-        <h3 id="agents-keys-title">Agent keys</h3>
-        <ul id="agents-keys" class="security-key-list"></ul>
-        <p id="agents-keys-empty" class="hint">No agent keys yet</p>
-        <form id="agents-create" class="security-form agents-create">
-          <label>Key name<input name="label" maxlength="64" required autocomplete="off" placeholder="Claude Code on my laptop"></label>
-          <fieldset>
-            <legend>Can read</legend>
-            <div class="agents-scopes">
-              <label class="check"><input name="scope" type="checkbox" value="issues" checked><span><strong>Issues and errors</strong><small>Stack traces with source-mapped code</small></span></label>
-              <label class="check"><input name="scope" type="checkbox" value="logs" checked><span><strong>Logs</strong><small>Messages and attributes</small></span></label>
-              <label class="check"><input name="scope" type="checkbox" value="recordings" checked><span><strong>Recordings</strong><small>What users did, as text</small></span></label>
-            </div>
-          </fieldset>
-          <div class="agents-create-row">
-            <label>Expires<select name="expires"><option value="90">In 90 days</option><option value="30">In 30 days</option><option value="365">In a year</option><option value="0">Never</option></select></label>
-            <button type="submit">Create key</button>
-          </div>
-        </form>
-        <div id="agents-created" class="security-created-key" hidden>
-          <label>Copy this key now<input id="agents-key-value" readonly autocomplete="off" spellcheck="false"></label>
-          <button id="agents-copy-key" type="button" class="secondary">Copy key</button>
-          <p class="hint">You won’t see it again<br>Set it up in your agent:</p>
-          <div id="agents-clients" class="agents-clients" role="tablist" aria-label="Agent"></div>
-          <p id="agents-where" class="agents-where"></p>
-          <pre class="agents-snippet"><code id="agents-snippet"></code></pre>
-          <button id="agents-copy-snippet" type="button" class="secondary">Copy setup</button>
-          <p id="agents-snippet-hint" class="hint"></p>
+    </div>
+    <form id="login" class="login">
+      <div class="login-hero" aria-hidden="true">
+        <div class="orb orb-hero"><span class="orb-ring"></span><span class="orb-core"><svg viewBox="0 0 40 40"><path class="logo-arc" d="M12 20a8 8 0 1 0 8-8"/><path class="logo-glyph" d="M16.2 12 21 8.2v7.6z"/><path class="logo-glyph" d="M18 16.5v7l6-3.5z"/></svg></span></div>
+        <p class="prompt-line">Session replay, error tracking and logs for PocketBase<span class="caret">▌</span></p>
+      </div>
+      <div class="card login-card">
+        <p class="eyebrow"><span class="step" aria-hidden="true">01</span>Superuser access</p>
+        <h2>Sign in to PocketBase</h2>
+        <p class="lede">Watch recordings and review issues and logs from your own server</p>
+        <label>Email<input name="email" type="email" autocomplete="username" required></label>
+        <label>Password<input name="password" type="password" autocomplete="current-password" required></label>
+        <button type="submit">Sign in<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h13M13 6.5l5.5 5.5-5.5 5.5"/></svg></button>
+        <p class="login-note"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10.5" width="14" height="10" rx="2.5"/><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"/></svg>You stay signed in for this browser tab only</p>
+      </div>
+    </form>
+    <main id="dashboard" hidden>
+      <dialog id="security-dialog" class="card" aria-labelledby="security-title">
+        <div class="dialog-head">
+          <span class="icon-tile" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 2.8l7.5 3v5.7c0 4.8-3.2 8.3-7.5 9.7-4.3-1.4-7.5-4.9-7.5-9.7V5.8z"/><path d="M8.8 12.2l2.2 2.2 4.2-4.4"/></svg></span>
+          <div><h2 id="security-title">Security settings</h2><p class="hint">Control who can send recordings, errors and logs, and how much data your server accepts<br>API key and sign-in requirements are off by default<br>Rate limits are already enabled</p></div>
+          <form method="dialog" class="dialog-x"><button type="submit" class="ghost" aria-label="Close" title="Close"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/></svg></button></form>
         </div>
-      </section>
-      <section class="security-keys" aria-labelledby="agents-activity-title">
-        <div class="agents-activity-head"><h3 id="agents-activity-title">Recent agent requests</h3><button id="agents-refresh" type="button" class="secondary">Refresh</button></div>
-        <ol id="agents-activity" class="agents-activity"></ol>
-        <p id="agents-activity-empty" class="hint">No agent requests yet</p>
-      </section>
-      <p id="agents-error" class="dialog-error" role="alert"></p>
-      <p id="agents-state" role="status" aria-live="polite"></p>
-      <div class="dialog-actions"><button id="close-agents" type="button" class="secondary">Close</button></div>
-    </dialog>
-    <dialog id="observability-settings-dialog" class="card" aria-labelledby="observability-settings-title">
-      <h2 id="observability-settings-title">Diagnostics settings</h2>
-      <form id="observability-settings">
-        <fieldset>
-          <legend>Error tracking</legend>
-          <label class="check"><input name="errors_enabled" type="checkbox"><span><strong>Collect errors</strong><small>Capture errors and group matching occurrences into issues</small></span></label>
-          <label class="check"><input name="server_errors" type="checkbox"><span><strong>Capture server errors</strong><small>Errors thrown in your pb_hooks routes, hooks and cron jobs, and errors PocketBase logs, become issues under the service pocketbase</small></span></label>
-          <label class="check"><input name="alerts_enabled" type="checkbox"><span><strong>Issue alerts</strong><small>Raise an alert when an issue first appears or a resolved issue returns. Alerts are listed in the Issues tab and sent to the webhook below</small></span></label>
-          <label>Alert webhook (optional)<input name="alert_webhook_url" type="url" inputmode="url" maxlength="2048" autocomplete="off" spellcheck="false" placeholder="https://hooks.slack.com/services/..."><small>Slack, Discord and Google Chat addresses get a message they can show. Any other address gets the alerts as JSON. Alerts go out within a minute</small></label>
-          <div class="webhook-test"><button id="test-webhook" type="button" class="secondary">Send a test alert</button><span id="webhook-test-state" role="status"></span></div>
-          <label>Keep errors and alerts for (days)<input name="errors_retention_days" type="number" min="1" max="365" required></label>
-        </fieldset>
-        <fieldset>
-          <legend>Logs</legend>
-          <label class="check"><input name="logs_enabled" type="checkbox"><span><strong>Collect logs</strong><small>Store structured logs sent by your app</small></span></label>
-          <label>Keep logs for (days)<input name="logs_retention_days" type="number" min="1" max="365" required></label>
-        </fieldset>
-        <fieldset>
-          <legend>Storage</legend>
-          <label>Daily error and log upload limit (MB)<input name="daily_limit_mb" type="number" min="1" max="1048576" step="1" required></label>
-        </fieldset>
-        <fieldset class="sourcemap-settings">
-          <legend>Source maps</legend>
-          <p id="sourcemaps-state" class="hint" role="status" aria-live="polite"></p>
-          <ul id="sourcemaps" class="sourcemap-list" aria-label="Uploaded source map versions"></ul>
-          <p class="hint">Upload the maps of each build to see original code in stack traces. The version must equal the appVersion your app reports. Deleting a version takes effect at once<br><code>REPLAY_SOURCEMAP_KEY=... npx pb-replay-sourcemaps --endpoint https://replay.example.com --version 1.4.0 --from dist</code></p>
-        </fieldset>
-        <details class="settings-advanced">
+        <form id="security-settings" class="security-form">
+          <fieldset>
+            <legend>Who can send data</legend>
+            <label class="check"><input name="requireApiKey" type="checkbox" aria-describedby="security-key-hint"><span><strong>Require API key</strong><small>Uploads need a valid API key</small></span></label>
+            <p id="security-key-hint" class="hint">Create an API key below to enable this option<br>Then add the key to your app before turning it on</p>
+            <label class="check"><input name="requireAccount" type="checkbox"><span><strong>Require a signed-in account</strong><small>Only signed-in users can send data<br>Guest uploads are blocked</small></span></label>
+            <p class="hint">API keys in websites and mobile apps can be copied<br>Rate and upload limits still apply when a key is required</p>
+          </fieldset>
+          <div class="dialog-actions"><button type="submit">Save settings</button></div>
+        </form>
+        <details id="security-limits-section" class="security-limits">
           <summary>Rate limits</summary>
-          <fieldset>
-            <legend>New sending sessions</legend>
-            <div class="row">
-              <label><span id="observability-device-limit-help-label">Per device each hour</span><input name="sessions_per_device_hour" type="number" min="1" max="1000000" step="1" required aria-labelledby="observability-device-limit-help-label" aria-describedby="observability-device-limit-help"><small id="observability-device-limit-help">Counts new error/log sending sessions for one app device in the past 60 minutes<br>A session can send many entries; refreshing it does not count again<span class="rate-limit-example"><strong>Example:</strong> With a limit of 30, one device can begin 30 error/log sessions within 60 minutes<br>Sending more entries in an active session does not use another session</span><span class="rate-limit-guidance"><strong>When to change:</strong> Raise this if your app needs more new sending sessions<br>Lower it to restrict repeated session creation by one device</span></small></label>
-              <label><span id="observability-ip-limit-help-label">Per IP each hour</span><input name="sessions_per_ip_hour" type="number" min="1" max="1000000" step="1" required aria-labelledby="observability-ip-limit-help-label" aria-describedby="observability-ip-limit-help"><small id="observability-ip-limit-help">Counts new error/log sending sessions across all devices sharing one IP in the past 60 minutes<br>Active sessions can keep sending within their other limits<span class="rate-limit-example"><strong>Example:</strong> With a limit of 120, 20 devices sharing one IP could each begin 6 error/log sessions within 60 minutes</span><span class="rate-limit-guidance"><strong>When to change:</strong> Raise this for shared networks with many users<br>Lower it to restrict new sending sessions from one network address</span></small></label>
-            </div>
-            <label><span id="observability-total-limit-help-label">Total each hour</span><input name="sessions_per_hour" type="number" min="1" max="1000000" step="1" required aria-labelledby="observability-total-limit-help-label" aria-describedby="observability-total-limit-help"><small id="observability-total-limit-help">Counts new error/log sending sessions across all apps, devices and IP addresses on this server in the past 60 minutes<br>Extra sessions must wait<span class="rate-limit-example"><strong>Example:</strong> With a limit of 20,000, all apps together can begin 20,000 error/log sessions within 60 minutes, across every IP and API key</span><span class="rate-limit-guidance"><strong>When to change:</strong> Raise this as usage grows and your server has capacity<br>Lower it to limit the total number of new sending sessions</span></small></label>
-          </fieldset>
-          <fieldset>
-            <legend>Requests and uploads</legend>
-            <label><span id="observability-config-limit-help-label">Settings checks per IP each minute</span><input name="config_requests_per_ip_minute" type="number" min="1" max="1000000" step="1" required aria-labelledby="observability-config-limit-help-label" aria-describedby="observability-config-limit-help"><small id="observability-config-limit-help">How often apps sharing one IP can check whether errors and logs are enabled, or begin or refresh a sending session<br>Extra checks wait until the next minute<span class="rate-limit-example"><strong>Example:</strong> With a limit of 120, all devices sharing one IP get 120 checks in one minute<br>Checks that refresh an existing session also count</span><span class="rate-limit-guidance"><strong>When to change:</strong> Raise this for networks with many active devices<br>Lower it to reduce repeated checks and session refresh requests</span></small></label>
-            <label><span id="observability-upload-limit-help-label">Upload requests per IP each minute</span><input name="upload_requests_per_ip_minute" type="number" min="1" max="1000000" step="1" required aria-labelledby="observability-upload-limit-help-label" aria-describedby="observability-upload-limit-help"><small id="observability-upload-limit-help">Each upload can contain several entries and counts as one request<br>One IP gets this many error requests and this many log requests per minute<span class="rate-limit-example"><strong>Example:</strong> With a limit of 120, one IP can send 120 error uploads and 120 log uploads in one minute<br>Each upload can contain many entries</span><span class="rate-limit-guidance"><strong>When to change:</strong> Raise this if normal error or log uploads are blocked<br>Lower it to reduce the number of upload requests</span></small></label>
-            <label><span id="observability-volume-limit-help-label">Upload limit per IP each hour (MB)</span><input name="upload_mb_per_ip_hour" type="number" min="1" max="1048576" step="1" required aria-labelledby="observability-volume-limit-help-label" aria-describedby="observability-volume-limit-help"><small id="observability-volume-limit-help">Total error and log data accepted from one IP during a clock hour<br>Both share this allowance<br>Extra uploads wait until the next hour<span class="rate-limit-example"><strong>Example:</strong> With an 8 MB allowance, 5 MB of logs leaves 3 MB for errors and more logs from the same IP that hour</span><span class="rate-limit-guidance"><strong>When to change:</strong> Raise this if normal error and log data reaches the allowance<br>Lower it to restrict how much data one IP can upload</span></small></label>
-          </fieldset>
-          <p class="hint">The examples use the default limits; your chosen values are in the fields<br>Upload request limits apply separately to errors and logs<br>Both share the data allowance<br>Active sessions can be refreshed without creating a new session</p>
+          <p class="hint">Start with the default limits<br>Increase a limit if your apps are being blocked during normal use<br>Lower it to reduce incoming traffic<br>The examples below use the defaults; your chosen values are in the fields</p>
+          <p class="hint">An IP address is the network address the server sees<br>People on the same Wi-Fi or mobile network can share one address and its limits<br>Per-device limits apply to one app device<br>Server limits cover all your apps and devices, even when they use different API keys</p>
+          <form id="security-limits" class="security-form">
+            <fieldset>
+              <legend>Recordings</legend>
+              <div class="security-limit-grid">
+                <label><span id="replay-config-limit-help-label">Settings checks per IP each minute</span><input name="replay.config_requests_per_ip_minute" type="number" min="1" max="1000000" step="1" required aria-labelledby="replay-config-limit-help-label" aria-describedby="replay-config-limit-help"><small id="replay-config-limit-help">How often apps sharing one IP can check whether recording is enabled and load privacy rules<br>Extra checks are blocked until the next minute<span class="rate-limit-example"><strong>Example:</strong> With a limit of 120, 20 devices sharing one IP could each make 6 settings checks in one minute</span><span class="rate-limit-guidance"><strong>When to change:</strong> Raise this for networks with many active devices<br>Lower it to reduce repeated settings checks</span></small></label>
+                <label><span id="replay-start-limit-help-label">Start requests per IP each minute</span><input name="replay.start_requests_per_ip_minute" type="number" min="1" max="1000000" step="1" required aria-labelledby="replay-start-limit-help-label" aria-describedby="replay-start-limit-help"><small id="replay-start-limit-help">Counts attempts to start recordings from one IP, including failed attempts<br>Extra attempts are blocked until the next minute<span class="rate-limit-example"><strong>Example:</strong> With a limit of 30, the 31st start attempt from one IP is blocked that minute, even if earlier attempts failed</span><span class="rate-limit-guidance"><strong>When to change:</strong> Raise this if many devices start recording at once on one network<br>Lower it to restrict repeated start attempts</span></small></label>
+                <label><span id="replay-upload-limit-help-label">Upload requests per IP each minute</span><input name="replay.upload_requests_per_ip_minute" type="number" min="1" max="1000000" step="1" required aria-labelledby="replay-upload-limit-help-label" aria-describedby="replay-upload-limit-help"><small id="replay-upload-limit-help">Recordings arrive in small parts<br>Each request sending a part counts once<br>All devices sharing one IP share this limit<span class="rate-limit-example"><strong>Example:</strong> With a limit of 240, devices sharing one IP can send 240 recording parts in one minute<br>A part can contain many recorded actions</span><span class="rate-limit-guidance"><strong>When to change:</strong> Raise this for busy apps or networks with many recording devices<br>Lower it to reduce the number of upload requests</span></small></label>
+                <label><span id="replay-volume-limit-help-label">Upload limit per IP each hour (MB)</span><input name="replay.upload_mb_per_ip_hour" type="number" min="1" max="1048576" step="1" required aria-labelledby="replay-volume-limit-help-label" aria-describedby="replay-volume-limit-help"><small id="replay-volume-limit-help">Total compressed recording data accepted from one IP during a clock hour<br>Uploads over this allowance are blocked until the next hour<span class="rate-limit-example"><strong>Example:</strong> With a 64 MB allowance, 40 MB uploaded by one device leaves 24 MB for other devices sharing its IP that hour</span><span class="rate-limit-guidance"><strong>When to change:</strong> Raise this if normal recordings reach the data allowance<br>Lower it to reduce how much recording data one IP can upload</span></small></label>
+                <label><span id="replay-device-limit-help-label">New recordings per device each hour</span><input name="replay.sessions_per_device_hour" type="number" min="1" max="1000000" step="1" required aria-labelledby="replay-device-limit-help-label" aria-describedby="replay-device-limit-help"><small id="replay-device-limit-help">Counts recordings started by one app device in the past 60 minutes, including recordings that have already ended<br>Extra starts must wait<span class="rate-limit-example"><strong>Example:</strong> With a limit of 12, one device can start 12 recordings within 60 minutes<br>A 13th must wait, even if earlier recordings have ended</span><span class="rate-limit-guidance"><strong>When to change:</strong> Raise this if your app often begins new recordings<br>Lower it to restrict one device repeatedly starting recordings</span></small></label>
+                <label><span id="replay-ip-limit-help-label">New recordings per IP each hour</span><input name="replay.sessions_per_ip_hour" type="number" min="1" max="1000000" step="1" required aria-labelledby="replay-ip-limit-help-label" aria-describedby="replay-ip-limit-help"><small id="replay-ip-limit-help">Counts recordings started across all devices sharing one IP in the past 60 minutes<br>Existing recordings can still upload within their other limits<span class="rate-limit-example"><strong>Example:</strong> With a limit of 120, 20 devices sharing one IP could each start 6 recordings within 60 minutes</span><span class="rate-limit-guidance"><strong>When to change:</strong> Raise this for shared Wi-Fi or mobile networks with many users<br>Lower it to restrict new recordings from one network address</span></small></label>
+                <label><span id="replay-total-limit-help-label">New recordings on this server each hour</span><input name="replay.sessions_per_hour" type="number" min="1" max="1000000" step="1" required aria-labelledby="replay-total-limit-help-label" aria-describedby="replay-total-limit-help"><small id="replay-total-limit-help">Counts recordings started across all apps, devices and IP addresses on this server in the past 60 minutes<br>Extra starts wait for older ones to leave that window<span class="rate-limit-example"><strong>Example:</strong> With a limit of 3,000, all your apps together can start 3,000 recordings within 60 minutes, across every IP and API key</span><span class="rate-limit-guidance"><strong>When to change:</strong> Raise this as your audience grows and your server has capacity<br>Lower it to limit the total number of new recordings</span></small></label>
+              </div>
+            </fieldset>
+            <fieldset>
+              <legend>Errors and logs</legend>
+              <div class="security-limit-grid">
+                <label><span id="diagnostics-config-limit-help-label">Settings checks per IP each minute</span><input name="observability.config_requests_per_ip_minute" type="number" min="1" max="1000000" step="1" required aria-labelledby="diagnostics-config-limit-help-label" aria-describedby="diagnostics-config-limit-help"><small id="diagnostics-config-limit-help">How often apps sharing one IP can check whether errors and logs are enabled, or begin or refresh a sending session<br>Extra checks wait until the next minute<span class="rate-limit-example"><strong>Example:</strong> With a limit of 120, all devices sharing one IP get 120 checks in one minute<br>Checks that refresh an existing session also count</span><span class="rate-limit-guidance"><strong>When to change:</strong> Raise this for networks with many active devices<br>Lower it to reduce repeated checks and session refresh requests</span></small></label>
+                <label><span id="diagnostics-upload-limit-help-label">Upload requests per IP each minute</span><input name="observability.upload_requests_per_ip_minute" type="number" min="1" max="1000000" step="1" required aria-labelledby="diagnostics-upload-limit-help-label" aria-describedby="diagnostics-upload-limit-help"><small id="diagnostics-upload-limit-help">Each upload can contain several entries and counts as one request<br>One IP gets this many error requests and this many log requests per minute<span class="rate-limit-example"><strong>Example:</strong> With a limit of 120, one IP can send 120 error uploads and 120 log uploads in one minute<br>Each upload can contain many entries</span><span class="rate-limit-guidance"><strong>When to change:</strong> Raise this if normal error or log uploads are blocked<br>Lower it to reduce the number of upload requests</span></small></label>
+                <label><span id="diagnostics-volume-limit-help-label">Upload limit per IP each hour (MB)</span><input name="observability.upload_mb_per_ip_hour" type="number" min="1" max="1048576" step="1" required aria-labelledby="diagnostics-volume-limit-help-label" aria-describedby="diagnostics-volume-limit-help"><small id="diagnostics-volume-limit-help">Total error and log data accepted from one IP during a clock hour<br>Both share this allowance<br>Extra uploads wait until the next hour<span class="rate-limit-example"><strong>Example:</strong> With an 8 MB allowance, 5 MB of logs leaves 3 MB for errors and more logs from the same IP that hour</span><span class="rate-limit-guidance"><strong>When to change:</strong> Raise this if normal error and log data reaches the allowance<br>Lower it to restrict how much data one IP can upload</span></small></label>
+                <label><span id="diagnostics-device-limit-help-label">New sessions per device each hour</span><input name="observability.sessions_per_device_hour" type="number" min="1" max="1000000" step="1" required aria-labelledby="diagnostics-device-limit-help-label" aria-describedby="diagnostics-device-limit-help"><small id="diagnostics-device-limit-help">Counts new error/log sending sessions for one app device in the past 60 minutes<br>A session can send many entries; refreshing it does not count again<span class="rate-limit-example"><strong>Example:</strong> With a limit of 30, one device can begin 30 error/log sessions within 60 minutes<br>Sending more entries in an active session does not use another session</span><span class="rate-limit-guidance"><strong>When to change:</strong> Raise this if your app needs more new sending sessions<br>Lower it to restrict repeated session creation by one device</span></small></label>
+                <label><span id="diagnostics-ip-limit-help-label">New sessions per IP each hour</span><input name="observability.sessions_per_ip_hour" type="number" min="1" max="1000000" step="1" required aria-labelledby="diagnostics-ip-limit-help-label" aria-describedby="diagnostics-ip-limit-help"><small id="diagnostics-ip-limit-help">Counts new error/log sending sessions across all devices sharing one IP in the past 60 minutes<br>Active sessions can keep sending within their other limits<span class="rate-limit-example"><strong>Example:</strong> With a limit of 120, 20 devices sharing one IP could each begin 6 error/log sessions within 60 minutes</span><span class="rate-limit-guidance"><strong>When to change:</strong> Raise this for shared networks with many users<br>Lower it to restrict new sending sessions from one network address</span></small></label>
+                <label><span id="diagnostics-total-limit-help-label">New sessions on this server each hour</span><input name="observability.sessions_per_hour" type="number" min="1" max="1000000" step="1" required aria-labelledby="diagnostics-total-limit-help-label" aria-describedby="diagnostics-total-limit-help"><small id="diagnostics-total-limit-help">Counts new error/log sending sessions across all apps, devices and IP addresses on this server in the past 60 minutes<br>Extra sessions must wait<span class="rate-limit-example"><strong>Example:</strong> With a limit of 20,000, all apps together can begin 20,000 error/log sessions within 60 minutes, across every IP and API key</span><span class="rate-limit-guidance"><strong>When to change:</strong> Raise this as usage grows and your server has capacity<br>Lower it to limit the total number of new sending sessions</span></small></label>
+              </div>
+              <p class="hint">The upload request limit applies to errors and logs separately<br>The data limit covers both<br>These values also appear in Diagnostics settings</p>
+            </fieldset>
+            <p class="hint">Request counts reset at the start of each minute, and upload allowances reset at the start of each hour<br>New-session limits look back over the past 60 minutes<br>Saving new limits keeps the current usage counts<br>Daily storage limits are set in Recording settings and Diagnostics settings</p>
+            <p id="security-limits-error" class="dialog-error" role="alert"></p>
+            <p id="security-limits-state" role="status" aria-live="polite"></p>
+            <div class="dialog-actions"><button id="security-limits-defaults" type="button" class="secondary">Use default limits</button><button type="submit">Save limits</button></div>
+          </form>
         </details>
-        <p class="hint">Error and log collection start off. These settings apply separately from session recording</p>
-        <p id="observability-settings-error" class="dialog-error" role="alert"></p>
-        <div class="dialog-actions"><button id="close-observability-settings" type="button" class="secondary">Cancel</button><button type="submit">Save settings</button></div>
-      </form>
-    </dialog>
-    <dialog id="settings-dialog" class="card" aria-labelledby="settings-title">
-      <h2 id="settings-title">Recording settings</h2>
-      <form id="settings">
-        <fieldset>
-          <legend>Who to record</legend>
-          <div class="row">
-            <label>Record<select name="mode"><option value="off">Nobody (off)</option><option value="percentage">A percentage of devices</option><option value="accounts">Selected accounts</option></select></label>
-            <label data-mode="percentage">Percentage of devices<input name="percentage" type="number" min="0" max="100" step="0.1"></label>
-          </div>
-          <label data-mode="accounts">Account IDs<textarea name="account_ids" rows="3" placeholder="One account ID per line"></textarea></label>
-          <label>Upload<select name="upload_mode"><option value="session">Whole sessions</option><option value="trigger">Only when something breaks</option></select><small id="upload-mode-hint"></small></label>
-        </fieldset>
-        <fieldset>
-          <legend>Storage</legend>
-          <div class="row">
-            <label>Keep recordings for (days)<input name="retention_days" type="number" min="1" max="365" required></label>
-            <label>Daily upload limit (MB)<input name="daily_limit_mb" type="number" min="1" max="1048576" step="1" required></label>
-          </div>
-        </fieldset>
-        <fieldset>
-          <legend>Privacy</legend>
-          <label>Mask text in<small>CSS selectors separated by commas. Matching text plays back as *</small><textarea class="code" name="mask_selector" rows="3" maxlength="20000" spellcheck="false" autocomplete="off" placeholder=".chat-message, [class*=&quot;name&quot;]"></textarea></label>
-          <label>Block elements<small>CSS selectors separated by commas. Matching elements play back as empty boxes</small><textarea class="code" name="block_selector" rows="3" maxlength="20000" spellcheck="false" autocomplete="off" placeholder=".avatar, .private-photo"></textarea></label>
-          <label class="check"><input name="record_images" type="checkbox"><span><strong>Include images created in the app</strong><small>Show extra images in replays, such as avatars and photos. Large images are skipped.</small></span></label>
-        </fieldset>
-        <fieldset>
-          <legend>Activity</legend>
-          <label class="check"><input name="record_pocketbase" type="checkbox"><span><strong>Record PocketBase calls</strong><small>For apps that pass their PocketBase client to startReplay: each call's collection, action, status, item count and the names of fields PocketBase refused. Never the values sent or returned</small></span></label>
-          <label class="check"><input name="record_network" type="checkbox"><span><strong>Record network requests</strong><small>Method, address without its query, status and timing of each request the app makes. Headers and bodies are never recorded</small></span></label>
-          <label class="check"><input name="record_console" type="checkbox"><span><strong>Record console messages</strong><small>Console output and uncaught errors, with common secrets and email addresses removed. Check what your app logs before turning this on</small></span></label>
-        </fieldset>
-        <p class="hint">Changes take effect within a minute and apply to what gets recorded next. If the app can’t use a privacy rule, recording pauses to protect private text.</p>
-        <p id="settings-error" class="dialog-error" role="alert"></p>
-        <div class="dialog-actions"><button type="button" id="close-settings" class="secondary">Cancel</button><button type="submit">Save settings</button></div>
-      </form>
-    </dialog>
-    <dialog id="erase-dialog" class="card" aria-labelledby="erase-title">
-      <form id="erase-confirm" method="dialog">
-        <h2 id="erase-title">Delete recordings, errors and logs for this account?</h2>
-        <p id="erase-text"></p>
-        <label>Type the account ID to confirm<input name="confirm_account" autocomplete="off" spellcheck="false"></label>
-        <div class="dialog-actions"><button type="button" id="erase-cancel" class="secondary">Cancel</button><button type="submit" id="erase-go" class="danger" value="delete" disabled>Delete data</button></div>
-      </form>
-    </dialog>
-    <div id="sessions-view" class="workspace" role="tabpanel" aria-labelledby="sessions-tab">
-      <section class="card sessions-panel" aria-label="Sessions">
-        <form id="filters" class="filters">
-          <label>Account<input name="account" autocomplete="off"></label>
-          <label>Device<input name="device" autocomplete="off"></label>
-          <label>Room<input name="room" autocomplete="off"></label>
-          <label>From<input name="from" type="date"></label>
-          <label>Through<input name="to" type="date"></label>
-          <button type="submit">Find sessions</button>
-        </form>
-        <p class="account-tools"><button type="button" id="erase-account" class="danger">Delete recordings, errors and logs for the account in the filter</button></p>
-        <p id="session-count" class="session-count"></p>
-        <div id="sessions-focus" hidden><div class="list-focus"><p id="sessions-focus-note" role="status"></p><button id="sessions-focus-back" type="button" class="secondary">Back to the list</button></div><ul id="sessions-focus-row" class="session-list"></ul></div>
-        <div id="session-scroll" class="session-scroll">
-          <ul id="sessions" class="session-list"></ul>
-          <div id="sessions-end" class="sessions-end"><span id="sessions-state"></span><button type="button" id="load-more" hidden>Load more</button></div>
-        </div>
-      </section>
-      <section id="viewer" class="card viewer" aria-label="Recording">
-        <div id="no-recording" class="no-recording"><h2>No recording open</h2><p>Choose a session to watch it here</p></div>
-        <div id="recording-loading" class="no-recording" hidden><span class="spinner" aria-hidden="true"></span><h2>Loading recording...</h2></div>
-        <div id="recording" hidden>
-          <div class="recording-heading"><h2 id="recording-title">Recording</h2><button id="close-recording">Close</button></div>
-          <p id="recording-info"></p><p id="gaps" role="status"></p><p id="idle"></p>
-          <div class="detail-actions"><button id="recording-issues" type="button" class="secondary">Issues for this session</button><button id="recording-logs" type="button" class="secondary">Logs for this session</button></div>
-          <div id="player"></div>
-          <p id="clock" class="clock"></p>
-          <section id="devtools" class="devtools" aria-label="Session activity" hidden></section>
-        </div>
-      </section>
-    </div>
-    <div id="issues-view" class="telemetry-view" role="tabpanel" aria-labelledby="issues-tab" hidden>
-      <p id="errors-disabled" class="feature-state" hidden>Error tracking is off. Enable Collect errors in Diagnostics settings to capture new errors</p>
-      <div class="telemetry-workspace">
-        <section class="card telemetry-panel" aria-label="Issues">
-          <form id="issue-filters" class="telemetry-filters">
-            <label class="wide">Search errors<input name="q" type="search" placeholder="Error message or name" autocomplete="off" maxlength="500"></label>
-            <label>Status<select name="status"><option value="open">Open</option><option value="resolved">Resolved</option><option value="ignored">Ignored</option><option value="">All statuses</option></select></label>
-            <label>Service<input name="service" autocomplete="off"></label>
-            <details class="filter-options">
-              <summary>More filters<span></span></summary>
-              <div class="telemetry-filter-fields">
-                <label>Account<input name="accountId" autocomplete="off"></label>
-                <label>Device<input name="deviceId" autocomplete="off"></label>
-                <label class="wide">Session<input name="sessionId" autocomplete="off"></label>
-                <label>From<input name="from" type="date"></label>
-                <label>Through<input name="to" type="date"></label>
-              </div>
-            </details>
-            <button type="submit">Find issues</button>
+        <section class="security-keys" aria-labelledby="security-keys-title">
+          <h3 id="security-keys-title">API keys</h3>
+          <p class="hint">Give each app its own key<br>Keys can only send data<br>All keys share the same recording settings and upload limits</p>
+          <ul id="security-keys" class="security-key-list"></ul>
+          <p id="security-keys-empty" class="hint empty-note">No API keys yet</p>
+          <form id="security-create-key" class="security-create-key">
+            <label>Key name<input name="label" maxlength="64" required autocomplete="off" placeholder="My app"></label>
+            <button type="submit">Create key</button>
           </form>
-          <details class="issue-alerts">
-            <summary>Issue alerts <span id="alert-count"></span></summary>
-            <div class="alerts-heading"><p id="alerts-state" role="status"></p><button id="refresh-alerts" type="button" class="secondary">Refresh</button></div>
-            <ul id="alerts" class="telemetry-list alert-list"></ul>
-            <button id="alerts-more" type="button" class="secondary" hidden>Load more alerts</button>
+          <div id="security-created-key" class="security-created-key" hidden>
+            <label>Copy this key now<input id="security-key-value" readonly autocomplete="off" spellcheck="false"></label>
+            <button id="security-copy-key" type="button" class="secondary">Copy key</button>
+            <p class="hint">Copy this key now<br>You won’t see it again<br>Add it to your app’s setup as <code>apiKey</code></p>
+          </div>
+        </section>
+        <p id="security-error" class="dialog-error" role="alert"></p>
+        <p id="security-state" role="status" aria-live="polite"></p>
+        <div class="dialog-actions"><button id="close-security" type="button" class="secondary">Close</button></div>
+      </dialog>
+      <dialog id="agents-dialog" class="card" aria-labelledby="agents-title">
+        <div class="dialog-head">
+          <span class="icon-tile" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3.5l1.9 5.1 5.1 1.9-5.1 1.9-1.9 5.1-1.9-5.1-5.1-1.9 5.1-1.9z"/><path d="M18.5 15.5l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8z"/></svg></span>
+          <div><h2 id="agents-title">AI agents</h2><p class="hint">Let coding agents such as Claude Code, Cursor and VS Code read issues, logs and recordings over MCP<br>Agents get recordings as text: pages, clicks, form fields and PocketBase calls, never field values<br>Keys can only read, each limited to what you choose, and every request is listed below</p></div>
+          <form method="dialog" class="dialog-x"><button type="submit" class="ghost" aria-label="Close" title="Close"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/></svg></button></form>
+        </div>
+        <div class="agents-endpoint">
+          <span>Server URL</span>
+          <code id="agents-url"></code>
+          <button id="agents-copy-url" type="button" class="secondary">Copy</button>
+        </div>
+        <section class="security-keys" aria-labelledby="agents-keys-title">
+          <h3 id="agents-keys-title">Agent keys</h3>
+          <ul id="agents-keys" class="security-key-list"></ul>
+          <p id="agents-keys-empty" class="hint empty-note">No agent keys yet</p>
+          <form id="agents-create" class="security-form agents-create">
+            <label>Key name<input name="label" maxlength="64" required autocomplete="off" placeholder="Claude Code on my laptop"></label>
+            <fieldset>
+              <legend>Can read</legend>
+              <div class="agents-scopes">
+                <label class="check"><input name="scope" type="checkbox" value="issues" checked><span><strong>Issues and errors</strong><small>Stack traces with source-mapped code</small></span></label>
+                <label class="check"><input name="scope" type="checkbox" value="logs" checked><span><strong>Logs</strong><small>Messages and attributes</small></span></label>
+                <label class="check"><input name="scope" type="checkbox" value="recordings" checked><span><strong>Recordings</strong><small>What users did, as text</small></span></label>
+              </div>
+            </fieldset>
+            <div class="agents-create-row">
+              <label>Expires<select name="expires"><option value="90">In 90 days</option><option value="30">In 30 days</option><option value="365">In a year</option><option value="0">Never</option></select></label>
+              <button type="submit">Create key</button>
+            </div>
+          </form>
+          <div id="agents-created" class="security-created-key" hidden>
+            <label>Copy this key now<input id="agents-key-value" readonly autocomplete="off" spellcheck="false"></label>
+            <button id="agents-copy-key" type="button" class="secondary">Copy key</button>
+            <p class="hint">You won’t see it again<br>Set it up in your agent:</p>
+            <div id="agents-clients" class="agents-clients" role="tablist" aria-label="Agent"></div>
+            <p id="agents-where" class="agents-where"></p>
+            <pre class="agents-snippet"><code id="agents-snippet"></code></pre>
+            <button id="agents-copy-snippet" type="button" class="secondary">Copy setup</button>
+            <p id="agents-snippet-hint" class="hint"></p>
+          </div>
+        </section>
+        <section class="security-keys" aria-labelledby="agents-activity-title">
+          <div class="agents-activity-head"><h3 id="agents-activity-title">Recent agent requests</h3><button id="agents-refresh" type="button" class="secondary">Refresh</button></div>
+          <ol id="agents-activity" class="agents-activity"></ol>
+          <p id="agents-activity-empty" class="hint empty-note">No agent requests yet</p>
+        </section>
+        <p id="agents-error" class="dialog-error" role="alert"></p>
+        <p id="agents-state" role="status" aria-live="polite"></p>
+        <div class="dialog-actions"><button id="close-agents" type="button" class="secondary">Close</button></div>
+      </dialog>
+      <dialog id="observability-settings-dialog" class="card" aria-labelledby="observability-settings-title">
+        <div class="dialog-head">
+          <span class="icon-tile" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M2.5 12h4l2.5-7 5 14 2.5-7h5"/></svg></span>
+          <div><h2 id="observability-settings-title">Diagnostics settings</h2><p class="hint">Error tracking, structured logs, issue alerts and source maps</p></div>
+          <form method="dialog" class="dialog-x"><button type="submit" class="ghost" aria-label="Close" title="Close"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/></svg></button></form>
+        </div>
+        <form id="observability-settings">
+          <fieldset>
+            <legend>Error tracking</legend>
+            <label class="check"><input name="errors_enabled" type="checkbox"><span><strong>Collect errors</strong><small>Capture errors and group matching occurrences into issues</small></span></label>
+            <label class="check"><input name="server_errors" type="checkbox"><span><strong>Capture server errors</strong><small>Errors thrown in your pb_hooks routes, hooks and cron jobs, and errors PocketBase logs, become issues under the service pocketbase</small></span></label>
+            <label class="check"><input name="alerts_enabled" type="checkbox"><span><strong>Issue alerts</strong><small>Raise an alert when an issue first appears or a resolved issue returns. Alerts are listed in the Issues tab and sent to the webhook below</small></span></label>
+            <label>Alert webhook (optional)<input name="alert_webhook_url" type="url" inputmode="url" maxlength="2048" autocomplete="off" spellcheck="false" placeholder="https://hooks.slack.com/services/..."><small>Slack, Discord and Google Chat addresses get a message they can show. Any other address gets the alerts as JSON. Alerts go out within a minute</small></label>
+            <div class="webhook-test"><button id="test-webhook" type="button" class="secondary">Send a test alert</button><span id="webhook-test-state" role="status"></span></div>
+            <label>Keep errors and alerts for (days)<input name="errors_retention_days" type="number" min="1" max="365" required></label>
+          </fieldset>
+          <fieldset>
+            <legend>Logs</legend>
+            <label class="check"><input name="logs_enabled" type="checkbox"><span><strong>Collect logs</strong><small>Store structured logs sent by your app</small></span></label>
+            <label>Keep logs for (days)<input name="logs_retention_days" type="number" min="1" max="365" required></label>
+          </fieldset>
+          <fieldset>
+            <legend>Storage</legend>
+            <label>Daily error and log upload limit (MB)<input name="daily_limit_mb" type="number" min="1" max="1048576" step="1" required></label>
+          </fieldset>
+          <fieldset class="sourcemap-settings">
+            <legend>Source maps</legend>
+            <p id="sourcemaps-state" class="hint" role="status" aria-live="polite"></p>
+            <ul id="sourcemaps" class="sourcemap-list" aria-label="Uploaded source map versions"></ul>
+            <p class="hint">Upload the maps of each build to see original code in stack traces. The version must equal the appVersion your app reports. Deleting a version takes effect at once<br><code>REPLAY_SOURCEMAP_KEY=... npx pb-replay-sourcemaps --endpoint https://replay.example.com --version 1.4.0 --from dist</code></p>
+          </fieldset>
+          <details class="settings-advanced">
+            <summary>Rate limits</summary>
+            <fieldset>
+              <legend>New sending sessions</legend>
+              <div class="row">
+                <label><span id="observability-device-limit-help-label">Per device each hour</span><input name="sessions_per_device_hour" type="number" min="1" max="1000000" step="1" required aria-labelledby="observability-device-limit-help-label" aria-describedby="observability-device-limit-help"><small id="observability-device-limit-help">Counts new error/log sending sessions for one app device in the past 60 minutes<br>A session can send many entries; refreshing it does not count again<span class="rate-limit-example"><strong>Example:</strong> With a limit of 30, one device can begin 30 error/log sessions within 60 minutes<br>Sending more entries in an active session does not use another session</span><span class="rate-limit-guidance"><strong>When to change:</strong> Raise this if your app needs more new sending sessions<br>Lower it to restrict repeated session creation by one device</span></small></label>
+                <label><span id="observability-ip-limit-help-label">Per IP each hour</span><input name="sessions_per_ip_hour" type="number" min="1" max="1000000" step="1" required aria-labelledby="observability-ip-limit-help-label" aria-describedby="observability-ip-limit-help"><small id="observability-ip-limit-help">Counts new error/log sending sessions across all devices sharing one IP in the past 60 minutes<br>Active sessions can keep sending within their other limits<span class="rate-limit-example"><strong>Example:</strong> With a limit of 120, 20 devices sharing one IP could each begin 6 error/log sessions within 60 minutes</span><span class="rate-limit-guidance"><strong>When to change:</strong> Raise this for shared networks with many users<br>Lower it to restrict new sending sessions from one network address</span></small></label>
+              </div>
+              <label><span id="observability-total-limit-help-label">Total each hour</span><input name="sessions_per_hour" type="number" min="1" max="1000000" step="1" required aria-labelledby="observability-total-limit-help-label" aria-describedby="observability-total-limit-help"><small id="observability-total-limit-help">Counts new error/log sending sessions across all apps, devices and IP addresses on this server in the past 60 minutes<br>Extra sessions must wait<span class="rate-limit-example"><strong>Example:</strong> With a limit of 20,000, all apps together can begin 20,000 error/log sessions within 60 minutes, across every IP and API key</span><span class="rate-limit-guidance"><strong>When to change:</strong> Raise this as usage grows and your server has capacity<br>Lower it to limit the total number of new sending sessions</span></small></label>
+            </fieldset>
+            <fieldset>
+              <legend>Requests and uploads</legend>
+              <label><span id="observability-config-limit-help-label">Settings checks per IP each minute</span><input name="config_requests_per_ip_minute" type="number" min="1" max="1000000" step="1" required aria-labelledby="observability-config-limit-help-label" aria-describedby="observability-config-limit-help"><small id="observability-config-limit-help">How often apps sharing one IP can check whether errors and logs are enabled, or begin or refresh a sending session<br>Extra checks wait until the next minute<span class="rate-limit-example"><strong>Example:</strong> With a limit of 120, all devices sharing one IP get 120 checks in one minute<br>Checks that refresh an existing session also count</span><span class="rate-limit-guidance"><strong>When to change:</strong> Raise this for networks with many active devices<br>Lower it to reduce repeated checks and session refresh requests</span></small></label>
+              <label><span id="observability-upload-limit-help-label">Upload requests per IP each minute</span><input name="upload_requests_per_ip_minute" type="number" min="1" max="1000000" step="1" required aria-labelledby="observability-upload-limit-help-label" aria-describedby="observability-upload-limit-help"><small id="observability-upload-limit-help">Each upload can contain several entries and counts as one request<br>One IP gets this many error requests and this many log requests per minute<span class="rate-limit-example"><strong>Example:</strong> With a limit of 120, one IP can send 120 error uploads and 120 log uploads in one minute<br>Each upload can contain many entries</span><span class="rate-limit-guidance"><strong>When to change:</strong> Raise this if normal error or log uploads are blocked<br>Lower it to reduce the number of upload requests</span></small></label>
+              <label><span id="observability-volume-limit-help-label">Upload limit per IP each hour (MB)</span><input name="upload_mb_per_ip_hour" type="number" min="1" max="1048576" step="1" required aria-labelledby="observability-volume-limit-help-label" aria-describedby="observability-volume-limit-help"><small id="observability-volume-limit-help">Total error and log data accepted from one IP during a clock hour<br>Both share this allowance<br>Extra uploads wait until the next hour<span class="rate-limit-example"><strong>Example:</strong> With an 8 MB allowance, 5 MB of logs leaves 3 MB for errors and more logs from the same IP that hour</span><span class="rate-limit-guidance"><strong>When to change:</strong> Raise this if normal error and log data reaches the allowance<br>Lower it to restrict how much data one IP can upload</span></small></label>
+            </fieldset>
+            <p class="hint">The examples use the default limits; your chosen values are in the fields<br>Upload request limits apply separately to errors and logs<br>Both share the data allowance<br>Active sessions can be refreshed without creating a new session</p>
           </details>
-          <p id="issue-count" class="session-count"></p>
-          <div id="issues-focus" hidden><div class="list-focus"><p id="issues-focus-note" role="status"></p><button id="issues-focus-back" type="button" class="secondary">Back to the list</button></div><ul id="issues-focus-row" class="telemetry-list"></ul></div>
-          <div id="issues-scroll" class="telemetry-scroll"><ul id="issues" class="telemetry-list"></ul><p id="issues-state" class="list-state" role="status"></p><button id="issues-more" type="button" hidden>Load more issues</button></div>
+          <p class="hint">Error and log collection start off. These settings apply separately from session recording</p>
+          <p id="observability-settings-error" class="dialog-error" role="alert"></p>
+          <div class="dialog-actions"><button id="close-observability-settings" type="button" class="secondary">Cancel</button><button type="submit">Save settings</button></div>
+        </form>
+      </dialog>
+      <dialog id="settings-dialog" class="card" aria-labelledby="settings-title">
+        <div class="dialog-head">
+          <span class="icon-tile" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="3.5" fill="currentColor" stroke="none"/></svg></span>
+          <div><h2 id="settings-title">Recording settings</h2><p class="hint">Who gets recorded, how long recordings are kept, and what stays private</p></div>
+          <form method="dialog" class="dialog-x"><button type="submit" class="ghost" aria-label="Close" title="Close"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/></svg></button></form>
+        </div>
+        <form id="settings">
+          <fieldset>
+            <legend>Who to record</legend>
+            <div class="row">
+              <label>Record<select name="mode"><option value="off">Nobody (off)</option><option value="percentage">A percentage of devices</option><option value="accounts">Selected accounts</option></select></label>
+              <label data-mode="percentage">Percentage of devices<input name="percentage" type="number" min="0" max="100" step="0.1"></label>
+            </div>
+            <label data-mode="accounts">Account IDs<textarea name="account_ids" rows="3" placeholder="One account ID per line"></textarea></label>
+            <label>Upload<select name="upload_mode"><option value="session">Whole sessions</option><option value="trigger">Only when something breaks</option></select><small id="upload-mode-hint"></small></label>
+          </fieldset>
+          <fieldset>
+            <legend>Storage</legend>
+            <div class="row">
+              <label>Keep recordings for (days)<input name="retention_days" type="number" min="1" max="365" required></label>
+              <label>Daily upload limit (MB)<input name="daily_limit_mb" type="number" min="1" max="1048576" step="1" required></label>
+            </div>
+          </fieldset>
+          <fieldset>
+            <legend>Privacy</legend>
+            <label>Mask text in<small>CSS selectors separated by commas. Matching text plays back as *</small><textarea class="code" name="mask_selector" rows="3" maxlength="20000" spellcheck="false" autocomplete="off" placeholder=".chat-message, [class*=&quot;name&quot;]"></textarea></label>
+            <label>Block elements<small>CSS selectors separated by commas. Matching elements play back as empty boxes</small><textarea class="code" name="block_selector" rows="3" maxlength="20000" spellcheck="false" autocomplete="off" placeholder=".avatar, .private-photo"></textarea></label>
+            <label class="check"><input name="record_images" type="checkbox"><span><strong>Include images created in the app</strong><small>Show extra images in replays, such as avatars and photos. Large images are skipped.</small></span></label>
+          </fieldset>
+          <fieldset>
+            <legend>Activity</legend>
+            <label class="check"><input name="record_pocketbase" type="checkbox"><span><strong>Record PocketBase calls</strong><small>For apps that pass their PocketBase client to startReplay: each call's collection, action, status, item count and the names of fields PocketBase refused. Never the values sent or returned</small></span></label>
+            <label class="check"><input name="record_network" type="checkbox"><span><strong>Record network requests</strong><small>Method, address without its query, status and timing of each request the app makes. Headers and bodies are never recorded</small></span></label>
+            <label class="check"><input name="record_console" type="checkbox"><span><strong>Record console messages</strong><small>Console output and uncaught errors, with common secrets and email addresses removed. Check what your app logs before turning this on</small></span></label>
+          </fieldset>
+          <p class="hint">Changes take effect within a minute and apply to what gets recorded next. If the app can’t use a privacy rule, recording pauses to protect private text.</p>
+          <p id="settings-error" class="dialog-error" role="alert"></p>
+          <div class="dialog-actions"><button type="button" id="close-settings" class="secondary">Cancel</button><button type="submit">Save settings</button></div>
+        </form>
+      </dialog>
+      <dialog id="erase-dialog" class="card" aria-labelledby="erase-title">
+        <form id="erase-confirm" method="dialog">
+          <div class="dialog-head">
+            <span class="icon-tile danger" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M5.5 7l1 12a2 2 0 0 0 2 2h7a2 2 0 0 0 2-2l1-12M9 7V4.5h6V7"/></svg></span>
+            <div><h2 id="erase-title">Delete recordings, errors and logs for this account?</h2></div>
+          </div>
+          <p id="erase-text"></p>
+          <label>Type the account ID to confirm<input name="confirm_account" autocomplete="off" spellcheck="false"></label>
+          <div class="dialog-actions"><button type="button" id="erase-cancel" class="secondary">Cancel</button><button type="submit" id="erase-go" class="danger" value="delete" disabled>Delete data</button></div>
+        </form>
+      </dialog>
+      <div id="sessions-view" class="workspace" role="tabpanel" aria-labelledby="sessions-tab">
+        <section class="card sessions-panel" aria-label="Sessions">
+          <h2 class="section-title"><span class="step" aria-hidden="true">01</span>Find sessions</h2>
+          <form id="filters" class="filters">
+            <label>Account<input name="account" autocomplete="off"></label>
+            <label>Device<input name="device" autocomplete="off"></label>
+            <label>Room<input name="room" autocomplete="off"></label>
+            <label>From<input name="from" type="date"></label>
+            <label>Through<input name="to" type="date"></label>
+            <button type="submit"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.4-4.4"/></svg>Find sessions</button>
+          </form>
+          <p class="account-tools"><button type="button" id="erase-account" class="danger">Delete recordings, errors and logs for the account in the filter</button></p>
+          <div class="list-head"><h2 class="section-title"><span class="step" aria-hidden="true">02</span>Sessions</h2><p id="session-count" class="session-count"></p></div>
+          <div id="sessions-focus" hidden><div class="list-focus"><p id="sessions-focus-note" role="status"></p><button id="sessions-focus-back" type="button" class="secondary">Back to the list</button></div><ul id="sessions-focus-row" class="session-list"></ul></div>
+          <div id="session-scroll" class="session-scroll">
+            <ul id="sessions" class="session-list"></ul>
+            <div id="sessions-end" class="sessions-end"><span id="sessions-state"></span><button type="button" id="load-more" class="secondary" hidden>Load more</button></div>
+          </div>
         </section>
-        <section class="card telemetry-detail" aria-label="Issue details">
-          <div id="no-issue" class="no-recording"><h2>No issue open</h2><p>Choose an issue to review its errors</p></div>
-          <div id="issue-detail" hidden>
-            <div class="recording-heading"><h2 id="issue-title" tabindex="-1"></h2><button id="close-issue" type="button" class="secondary">Close</button></div>
-            <p id="issue-summary"></p>
-            <div id="issue-actions" class="detail-actions"><button type="button" data-issue-status="resolved">Resolve</button><button type="button" data-issue-status="ignored" class="secondary">Ignore</button><button type="button" data-issue-status="open" class="secondary">Reopen</button><button id="issue-logs" type="button" class="secondary" hidden>Logs for this session</button></div>
-            <h3>Occurrences</h3>
-            <ul id="occurrences" class="telemetry-list occurrence-list"></ul>
-            <p id="occurrences-state" class="list-state" role="status"></p><button id="occurrences-more" type="button" class="secondary" hidden>Load more occurrences</button>
-            <div id="occurrence-detail" hidden><h3>Selected occurrence</h3><div id="occurrence-context"></div><div class="stack-heading"><h3 id="occurrence-stack-title">Stack trace</h3><div id="stack-view" class="stack-view" role="group" aria-label="Stack trace view" hidden><button type="button" data-stack-view="original" aria-pressed="true">Original</button><button type="button" data-stack-view="minified" aria-pressed="false">Minified</button></div></div><p id="stack-state" class="stack-state"></p><div id="occurrence-frames" class="stack-original" role="region" aria-labelledby="occurrence-stack-title" hidden></div><pre id="occurrence-stack" class="structured"></pre><h3>Attributes</h3><pre id="occurrence-attributes" class="structured"></pre></div>
+        <section id="viewer" class="card viewer" aria-label="Recording">
+          <div id="no-recording" class="no-recording">
+            <div class="orb" aria-hidden="true"><span class="orb-ring"></span><span class="orb-core"><svg viewBox="0 0 24 24"><path class="fill" d="M9 6.8v10.4l8.2-5.2z"/></svg></span></div>
+            <h2>No recording open</h2>
+            <p>Choose a session to watch it here</p>
+          </div>
+          <div id="recording-loading" class="no-recording" hidden>
+            <div class="orb busy" aria-hidden="true"><span class="orb-ring"></span><span class="spinner"></span><span class="orb-core"><svg viewBox="0 0 24 24"><path d="M12 4.5v3M12 16.5v3M4.5 12h3M16.5 12h3M6.7 6.7l2.1 2.1M15.2 15.2l2.1 2.1M6.7 17.3l2.1-2.1M15.2 8.8l2.1-2.1"/></svg></span></div>
+            <h2>Loading recording...</h2>
+            <p>Fetching and decoding the recorded parts</p>
+          </div>
+          <div id="recording" hidden>
+            <div class="recording-heading">
+              <div class="recording-headline"><p class="eyebrow"><span class="step" aria-hidden="true">03</span>Now watching</p><h2 id="recording-title">Recording</h2></div>
+              <button id="close-recording" type="button" class="secondary"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/></svg>Close</button>
+            </div>
+            <p id="recording-info"></p><p id="gaps" role="status"></p><p id="idle"></p>
+            <div class="detail-actions"><button id="recording-issues" type="button" class="secondary"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="7.5" y="7.5" width="9" height="12" rx="4.5"/><path d="M9.5 7.6a2.5 2.5 0 0 1 5 0"/><path d="M7.5 13H4M20 13h-3.5"/></svg>Issues for this session</button><button id="recording-logs" type="button" class="secondary"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="m7.5 9.5 3 2.5-3 2.5"/><path d="M12.5 15h4"/></svg>Logs for this session</button></div>
+            <div class="stage"><div id="player"></div></div>
+            <p id="clock" class="clock"></p>
+            <section id="devtools" class="devtools" aria-label="Session activity" hidden></section>
           </div>
         </section>
       </div>
-    </div>
-    <div id="logs-view" class="telemetry-view" role="tabpanel" aria-labelledby="logs-tab" hidden>
-      <p id="logs-disabled" class="feature-state" hidden>Log collection is off. Enable Collect logs in Diagnostics settings to capture new logs</p>
-      <div class="telemetry-workspace">
-        <section class="card telemetry-panel" aria-label="Logs">
-          <form id="log-filters" class="telemetry-filters">
-            <label class="wide">Search logs<input name="q" type="search" placeholder="Log message or attributes" autocomplete="off" maxlength="500"></label>
-            <label>Level<select name="level"><option value="">All levels</option><option value="trace">Trace</option><option value="debug">Debug</option><option value="info">Info</option><option value="warn">Warning</option><option value="error">Error</option><option value="fatal">Fatal</option></select></label>
-            <label>Service<input name="service" autocomplete="off"></label>
-            <details class="filter-options">
-              <summary>More filters<span></span></summary>
-              <div class="telemetry-filter-fields">
-                <label>Account<input name="accountId" autocomplete="off"></label>
-                <label>Device<input name="deviceId" autocomplete="off"></label>
-                <label class="wide">Session<input name="sessionId" autocomplete="off"></label>
-                <label>From<input name="from" type="date"></label>
-                <label>Through<input name="to" type="date"></label>
-              </div>
+      <div id="issues-view" class="telemetry-view" role="tabpanel" aria-labelledby="issues-tab" hidden>
+        <p id="errors-disabled" class="feature-state" hidden>Error tracking is off. Enable Collect errors in Diagnostics settings to capture new errors</p>
+        <div class="telemetry-workspace">
+          <section class="card telemetry-panel" aria-label="Issues">
+            <h2 class="section-title"><span class="step" aria-hidden="true">01</span>Find issues</h2>
+            <form id="issue-filters" class="telemetry-filters">
+              <label class="wide">Search errors<input name="q" type="search" placeholder="Error message or name" autocomplete="off" maxlength="500"></label>
+              <label>Status<select name="status"><option value="open">Open</option><option value="resolved">Resolved</option><option value="ignored">Ignored</option><option value="">All statuses</option></select></label>
+              <label>Service<input name="service" autocomplete="off"></label>
+              <details class="filter-options">
+                <summary>More filters<span></span></summary>
+                <div class="telemetry-filter-fields">
+                  <label>Account<input name="accountId" autocomplete="off"></label>
+                  <label>Device<input name="deviceId" autocomplete="off"></label>
+                  <label class="wide">Session<input name="sessionId" autocomplete="off"></label>
+                  <label>From<input name="from" type="date"></label>
+                  <label>Through<input name="to" type="date"></label>
+                </div>
+              </details>
+              <button type="submit"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.4-4.4"/></svg>Find issues</button>
+            </form>
+            <details class="issue-alerts">
+              <summary><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 16.5V11a5.5 5.5 0 0 1 11 0v5.5l1.5 2h-14z"/><path d="M10 20.5a2.2 2.2 0 0 0 4 0"/></svg>Issue alerts <span id="alert-count"></span></summary>
+              <div class="alerts-heading"><p id="alerts-state" role="status"></p><button id="refresh-alerts" type="button" class="secondary">Refresh</button></div>
+              <ul id="alerts" class="telemetry-list alert-list"></ul>
+              <button id="alerts-more" type="button" class="secondary" hidden>Load more alerts</button>
             </details>
-            <button type="submit">Find logs</button>
-          </form>
-          <p id="log-count" class="session-count"></p>
-          <div id="logs-focus" hidden><div class="list-focus"><p id="logs-focus-note" role="status"></p><button id="logs-focus-back" type="button" class="secondary">Back to the list</button></div><ul id="logs-focus-row" class="telemetry-list"></ul></div>
-          <div id="logs-scroll" class="telemetry-scroll"><ul id="logs" class="telemetry-list"></ul><p id="logs-state" class="list-state" role="status"></p><button id="logs-more" type="button" hidden>Load more logs</button></div>
-        </section>
-        <section class="card telemetry-detail" aria-label="Log volume and details">
-          <p id="log-volume-state" class="list-state" role="status" aria-live="polite"></p>
-          <section id="log-volume" class="log-volume" aria-labelledby="log-volume-title" hidden>
-            <div class="volume-heading"><h3 id="log-volume-title">Log volume</h3><p id="log-volume-range"></p></div>
-            <ul class="volume-legend">
-              <li data-group="errors">Errors and fatal</li><li data-group="warnings">Warnings</li><li data-group="info">Info</li><li data-group="debug">Debug and trace</li>
-            </ul>
-            <div id="log-volume-chart" class="volume-chart" tabindex="0" role="group" aria-label="Log volume per period. Use the arrow keys to read each period"></div>
-            <div id="log-volume-tip" class="volume-tip" hidden></div>
-            <details class="volume-table"><summary>Show as a table</summary><div class="volume-table-scroll"><table id="log-volume-table"></table></div></details>
+            <div class="list-head"><h2 class="section-title"><span class="step" aria-hidden="true">02</span>Issues</h2><p id="issue-count" class="session-count"></p></div>
+            <div id="issues-focus" hidden><div class="list-focus"><p id="issues-focus-note" role="status"></p><button id="issues-focus-back" type="button" class="secondary">Back to the list</button></div><ul id="issues-focus-row" class="telemetry-list"></ul></div>
+            <div id="issues-scroll" class="telemetry-scroll"><ul id="issues" class="telemetry-list"></ul><p id="issues-state" class="list-state" role="status"></p><button id="issues-more" type="button" class="secondary" hidden>Load more issues</button></div>
           </section>
-          <div id="no-log" class="no-recording"><h2>No log open</h2><p>Choose a log to inspect its details</p></div>
-          <div id="log-detail" hidden><div class="recording-heading"><h2 id="log-title" tabindex="-1">Log details</h2><button id="close-log" type="button" class="secondary">Close</button></div><pre id="log-message" class="structured log-message"></pre><div id="log-context"></div><div class="detail-actions"><button id="log-issues" type="button" class="secondary" hidden>Issues for this session</button></div><h3>Attributes</h3><pre id="log-attributes" class="structured"></pre></div>
-        </section>
+          <section class="card telemetry-detail" aria-label="Issue details">
+            <div id="no-issue" class="no-recording">
+              <div class="orb" aria-hidden="true"><span class="orb-ring"></span><span class="orb-core"><svg viewBox="0 0 24 24"><rect x="7.5" y="7.5" width="9" height="12" rx="4.5"/><path d="M9.5 7.6a2.5 2.5 0 0 1 5 0"/><path d="M12 11.5v7.5"/><path d="M7.5 13H4M20 13h-3.5M7.7 9.8 5.2 7.8M16.3 9.8l2.5-2M7.9 16.9l-2.7 1.8M16.1 16.9l2.7 1.8"/></svg></span></div>
+              <h2>No issue open</h2>
+              <p>Choose an issue to review its errors</p>
+            </div>
+            <div id="issue-detail" hidden>
+              <div class="recording-heading"><div class="recording-headline"><p class="eyebrow"><span class="step" aria-hidden="true">03</span>Issue</p><h2 id="issue-title" tabindex="-1"></h2></div><button id="close-issue" type="button" class="secondary"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/></svg>Close</button></div>
+              <p id="issue-summary"></p>
+              <div id="issue-actions" class="detail-actions"><button type="button" data-issue-status="resolved"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>Resolve</button><button type="button" data-issue-status="ignored" class="secondary">Ignore</button><button type="button" data-issue-status="open" class="secondary">Reopen</button><button id="issue-logs" type="button" class="secondary" hidden><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="m7.5 9.5 3 2.5-3 2.5"/><path d="M12.5 15h4"/></svg>Logs for this session</button></div>
+              <h3>Occurrences</h3>
+              <ul id="occurrences" class="telemetry-list occurrence-list"></ul>
+              <p id="occurrences-state" class="list-state" role="status"></p><button id="occurrences-more" type="button" class="secondary" hidden>Load more occurrences</button>
+              <div id="occurrence-detail" hidden><h3>Selected occurrence</h3><div id="occurrence-context"></div><div class="stack-heading"><h3 id="occurrence-stack-title">Stack trace</h3><div id="stack-view" class="stack-view" role="group" aria-label="Stack trace view" hidden><button type="button" data-stack-view="original" aria-pressed="true">Original</button><button type="button" data-stack-view="minified" aria-pressed="false">Minified</button></div></div><p id="stack-state" class="stack-state"></p><div id="occurrence-frames" class="stack-original" role="region" aria-labelledby="occurrence-stack-title" hidden></div><pre id="occurrence-stack" class="structured terminal" data-title="replay@pocketbase: ~/stack-trace"></pre><h3>Attributes</h3><pre id="occurrence-attributes" class="structured terminal" data-title="replay@pocketbase: ~/attributes.json"></pre></div>
+            </div>
+          </section>
+        </div>
       </div>
-    </div>
-  </main>
+      <div id="logs-view" class="telemetry-view" role="tabpanel" aria-labelledby="logs-tab" hidden>
+        <p id="logs-disabled" class="feature-state" hidden>Log collection is off. Enable Collect logs in Diagnostics settings to capture new logs</p>
+        <div class="telemetry-workspace">
+          <section class="card telemetry-panel" aria-label="Logs">
+            <h2 class="section-title"><span class="step" aria-hidden="true">01</span>Find logs</h2>
+            <form id="log-filters" class="telemetry-filters">
+              <label class="wide">Search logs<input name="q" type="search" placeholder="Log message or attributes" autocomplete="off" maxlength="500"></label>
+              <label>Level<select name="level"><option value="">All levels</option><option value="trace">Trace</option><option value="debug">Debug</option><option value="info">Info</option><option value="warn">Warning</option><option value="error">Error</option><option value="fatal">Fatal</option></select></label>
+              <label>Service<input name="service" autocomplete="off"></label>
+              <details class="filter-options">
+                <summary>More filters<span></span></summary>
+                <div class="telemetry-filter-fields">
+                  <label>Account<input name="accountId" autocomplete="off"></label>
+                  <label>Device<input name="deviceId" autocomplete="off"></label>
+                  <label class="wide">Session<input name="sessionId" autocomplete="off"></label>
+                  <label>From<input name="from" type="date"></label>
+                  <label>Through<input name="to" type="date"></label>
+                </div>
+              </details>
+              <button type="submit"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.4-4.4"/></svg>Find logs</button>
+            </form>
+            <div class="list-head"><h2 class="section-title"><span class="step" aria-hidden="true">02</span>Logs</h2><p id="log-count" class="session-count"></p></div>
+            <div id="logs-focus" hidden><div class="list-focus"><p id="logs-focus-note" role="status"></p><button id="logs-focus-back" type="button" class="secondary">Back to the list</button></div><ul id="logs-focus-row" class="telemetry-list"></ul></div>
+            <div id="logs-scroll" class="telemetry-scroll"><ul id="logs" class="telemetry-list"></ul><p id="logs-state" class="list-state" role="status"></p><button id="logs-more" type="button" class="secondary" hidden>Load more logs</button></div>
+          </section>
+          <section class="card telemetry-detail" aria-label="Log volume and details">
+            <p id="log-volume-state" class="list-state" role="status" aria-live="polite"></p>
+            <section id="log-volume" class="log-volume" aria-labelledby="log-volume-title" hidden>
+              <div class="volume-heading"><h3 id="log-volume-title">Log volume</h3><p id="log-volume-range"></p></div>
+              <dl id="log-volume-stats" class="volume-stats"></dl>
+              <ul class="volume-legend">
+                <li data-group="errors">Errors and fatal</li><li data-group="warnings">Warnings</li><li data-group="info">Info</li><li data-group="debug">Debug and trace</li>
+              </ul>
+              <div id="log-volume-chart" class="volume-chart" tabindex="0" role="group" aria-label="Log volume per period. Use the arrow keys to read each period"></div>
+              <div id="log-volume-tip" class="volume-tip" hidden></div>
+              <details class="volume-table"><summary>Show as a table</summary><div class="volume-table-scroll"><table id="log-volume-table"></table></div></details>
+            </section>
+            <div id="no-log" class="no-recording">
+              <div class="orb" aria-hidden="true"><span class="orb-ring"></span><span class="orb-core"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="m7.5 9.5 3 2.5-3 2.5"/><path d="M12.5 15h4"/></svg></span></div>
+              <h2>No log open</h2>
+              <p>Choose a log to inspect its details</p>
+            </div>
+            <div id="log-detail" hidden><div class="recording-heading"><div class="recording-headline"><p class="eyebrow"><span class="step" aria-hidden="true">03</span>Log entry</p><h2 id="log-title" tabindex="-1">Log details</h2></div><button id="close-log" type="button" class="secondary"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/></svg>Close</button></div><pre id="log-message" class="structured log-message"></pre><div id="log-context"></div><div class="detail-actions"><button id="log-issues" type="button" class="secondary" hidden><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="7.5" y="7.5" width="9" height="12" rx="4.5"/><path d="M9.5 7.6a2.5 2.5 0 0 1 5 0"/><path d="M7.5 13H4M20 13h-3.5"/></svg>Issues for this session</button></div><h3>Attributes</h3><pre id="log-attributes" class="structured terminal" data-title="replay@pocketbase: ~/attributes.json"></pre></div>
+          </section>
+        </div>
+      </div>
+    </main>
+  </div>
+  <footer class="statusbar">
+    <span id="sb-state" class="sb-item sb-state" data-state="out">Signed out</span>
+    <span id="sb-view" class="sb-item" hidden></span>
+    <span id="sb-recording" class="sb-item" hidden></span>
+    <span id="sb-diagnostics" class="sb-item" hidden></span>
+    <span class="sb-spacer"></span>
+    <span id="sb-alerts" class="sb-item" hidden></span>
+    <span id="sb-keys" class="sb-item sb-keys" hidden><kbd>/</kbd> Search <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> Views</span>
+    <span id="sb-clock" class="sb-item sb-clock"></span>
+  </footer>
   <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
 </body>
 </html>

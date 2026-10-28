@@ -102,7 +102,7 @@ clicks, page changes, PocketBase calls, network requests, console output, errors
 and logs at their moments; select a row to jump there, or a PocketBase call to
 see why the server refused it
 
-![Session dashboard with account and device filters, a session list, and a checkout recording in the timeline viewer](docs/images/dashboard-replay.png)
+![Session dashboard with account and device filters, a session list, and a checkout recording paused at a failed payment, with the activity panel listing its clicks, requests and errors](docs/images/dashboard-replay.png)
 
 ### Errors and issues
 
@@ -111,7 +111,7 @@ original code through source maps, and device context, jump to the linked
 replay, and resolve or ignore an issue.
 Alerts flag new issues and failures that return after being resolved
 
-![Issues dashboard with grouped payment errors, occurrence counts, stack trace, and a link to the session replay](docs/images/dashboard-issues.png)
+![Issues dashboard with grouped payment errors, occurrence counts, a stack trace mapped to the original code, and a link to the session replay](docs/images/dashboard-issues.png)
 
 ### Structured logs
 
@@ -119,7 +119,7 @@ Search messages and filter by severity, service, account, device or session.
 The volume chart shows activity by log level; each entry includes its context,
 structured attributes and a replay link when available
 
-![Logs dashboard with a volume chart by severity, searchable log entries, and the selected entry's context and structured attributes](docs/images/dashboard-logs.png)
+![Logs dashboard with totals and a volume chart by severity, searchable log entries, and the selected entry's context and structured attributes](docs/images/dashboard-logs.png)
 
 <details>
 <summary>Recording settings and privacy controls</summary>
@@ -129,7 +129,7 @@ limits, and configure text masking and blocked elements. Errors and logs have
 separate collection and retention controls in Diagnostics settings, which
 also controls issue alerts
 
-![Recording settings dialog with percentage sampling, retention, daily upload limit, and masking and blocking selectors](docs/images/dashboard-settings.png)
+![Recording settings dialog with percentage sampling, retention, daily upload limit, masking and blocking selectors, and switches for recording PocketBase calls, network requests and console messages](docs/images/dashboard-settings.png)
 
 </details>
 
