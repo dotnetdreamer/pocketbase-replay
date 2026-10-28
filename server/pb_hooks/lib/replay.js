@@ -160,8 +160,10 @@ function account(app, meta) {
 }
 
 function selected(cfg, identity) {
-  const prefix = $os.getenv('REPLAY_APP_VERSION_PREFIX');
-  if (prefix && !identity.appVersion.startsWith(prefix)) {
+  // A comma-separated list admits several apps, each by the start of its version.
+  const prefixes = String($os.getenv('REPLAY_APP_VERSION_PREFIX') || '').split(',')
+    .map(function (value) { return value.trim(); }).filter(Boolean);
+  if (prefixes.length && !prefixes.some(function (prefix) { return identity.appVersion.startsWith(prefix); })) {
     const extraPrefix = $os.getenv('REPLAY_EXTRA_APP_VERSION_PREFIX');
     const extraPlatform = $os.getenv('REPLAY_EXTRA_PLATFORM');
     if (!extraPrefix || !extraPlatform || identity.platform !== extraPlatform || !identity.appVersion.startsWith(extraPrefix)) return false;
