@@ -110,7 +110,12 @@ void main() {
       ),
     );
     final balance = tap(tester, root, find.text('Balance'));
-    expect(balance.target.text, 'Balance *');
+    // Since Flutter 3.27 a tappable ListTile is a button, so the tap is named after the whole tile and the masked
+    // amount reads `*`. Older releases have no control there and name the title that was tapped.
+    final tileIsButton = tester
+        .widgetList<Semantics>(find.descendant(of: find.byType(ListTile), matching: find.byType(Semantics)))
+        .any((semantics) => semantics.properties.button == true);
+    expect(balance.target.text, tileIsButton ? 'Balance *' : 'Balance');
     expect(balance.maskedArea, isNull);
     final send = tap(tester, root, find.textContaining('Send money'), sensitive: ['4111 1111 1111 1111']);
     expect(send.target.text, '*');
