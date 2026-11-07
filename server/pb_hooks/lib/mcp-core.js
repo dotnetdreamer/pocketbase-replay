@@ -4,7 +4,7 @@
 // Both protocol eras are served at one endpoint. Modern clients (2026-07-28) send their version and capabilities
 // in each request's _meta, mirrored in headers that must match the body. Earlier clients open with initialize and
 // send MCP-Protocol-Version afterwards. No sessions are kept either way, so any PocketBase instance can answer.
-const VERSION = '0.3.1';
+const VERSION = '0.4.0';
 const SERVER = { name: 'pocketbase-replay', title: 'PocketBase Replay', version: VERSION };
 const MODERN = ['2026-07-28'];
 const LEGACY = ['2025-11-25', '2025-06-18', '2025-03-26'];
