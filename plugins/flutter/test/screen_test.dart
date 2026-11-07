@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:ui' as ui;
 
@@ -200,8 +201,8 @@ void main() {
       ),
     ));
     final field = tester.getRect(find.byType(EditableText));
-    navigator.currentState!
-        .push(MaterialPageRoute<void>(builder: (_) => const ColoredBox(color: Color(0xFF00FF00), child: SizedBox.expand())));
+    unawaited(navigator.currentState!
+        .push(MaterialPageRoute<void>(builder: (_) => const ColoredBox(color: Color(0xFF00FF00), child: SizedBox.expand()))));
     await tester.pumpAndSettle();
     final events = <ReplayEvent>[];
     final stop = ScreenRecorder.instance.start(events.add, settings());

@@ -1,6 +1,7 @@
 // Runs only against a replay server, with its superuser:
 // REPLAY_TEST_ENDPOINT=http://127.0.0.1:8090 REPLAY_TEST_EMAIL=... REPLAY_TEST_PASSWORD=... flutter test test/server_test.dart
 // The server's recording and diagnostics settings are changed, so use a throwaway one.
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -112,7 +113,7 @@ void main() {
     await waitFor(tester, () => recorded() > 0, 'the first frame');
 
     await tester.tap(find.text('Pay now'));
-    navigator.currentState!.pushNamed('/checkout');
+    unawaited(navigator.currentState!.pushNamed('/checkout'));
     await tester.pumpAndSettle();
     debugPrint('Checkout opened');
 
